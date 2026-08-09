@@ -101,7 +101,31 @@ function packageTarget(kind: "npm" | "pypi", rawName: string): ParsedInput {
   return { kind, owner: "", name, ref: "" };
 }
 
-/** Canonical, URL-safe identity used as the D1 primary key. */
-export function cacheKeyFor(owner: string, name: string, sha: string): string {
-  return `github:${owner.toLowerCase()}/${name.toLowerCase()}@${sha}`;
+/**
+ * Canonical, URL-safe identity used as the D1 primary key.
+ *
+ * A registry submission is a different analysis from a bare repository
+ * submission at the same commit: only the former runs the registry-provenance
+ * check. They therefore occupy distinct rows, or the first one analysed would
+ * silently be served for the other with a check missing and nothing saying so.
+ */
+export function cacheKeyFor(
+  owner: string,
+  name: string,
+  sha: string,
+  registry?: { kind: "npm" | "pypi"; packageName: string },
+): string {
+  const base = `github:${owner.toLowerCase()}/${name.toLowerCase()}@${sha}`;
+  return registry ? `${base}#${registry.kind}:${registry.packageName.toLowerCase()}` : base;
+}
+
+/** The `#npm:pkg` suffix of a cache key, as carried in a verdict URL. */
+export function registryQualifier(raw: string): { kind: "npm" | "pypi"; packageName: string } | null {
+  const m = /^(npm|pypi):(.+)$/i.exec(raw.trim());
+  if (!m) return null;
+  const kind = m[1]!.toLowerCase() as "npm" | "pypi";
+  const name = m[2]!;
+  const pattern = kind === "npm" ? NPM_NAME : PYPI_NAME;
+  if (!pattern.test(name.toLowerCase())) return null;
+  return { kind, packageName: name };
 }

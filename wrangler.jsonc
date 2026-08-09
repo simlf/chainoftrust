@@ -54,4 +54,8 @@
   //                        supported mode, not an outage.
   //   GITHUB_TOKEN       - optional. Raises the GitHub API rate limit from 60
   //                        to 5000 requests/hour. Use a token with no scopes.
+  //   RATE_LIMIT_SALT    - optional. Salts the rate limiter's IP digests.
+  //                        Absent, they are salted with the UTC day alone,
+  //                        which rotates them daily but leaves them
+  //                        enumerable by anyone who can read the table.
 }

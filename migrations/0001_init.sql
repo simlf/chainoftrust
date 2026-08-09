@@ -16,8 +16,12 @@ CREATE TABLE IF NOT EXISTS verdicts (
 CREATE INDEX IF NOT EXISTS verdicts_target
   ON verdicts (host, owner, name, created_at DESC);
 
--- Rate limiting. The IP is stored as a salted SHA-256 prefix, never in the
--- clear. Rows are only meaningful for the day they belong to.
+-- Rate limiting. The IP is never stored in the clear: what is written is a
+-- SHA-256 prefix over the address, the UTC day, and RATE_LIMIT_SALT when that
+-- secret is set. Without the secret the digest is still enumerable by anyone
+-- who can read this table, since the address space is small, so the day
+-- rotation is the floor rather than the guarantee. Rows are only meaningful
+-- for the day they belong to and are deleted once that day has passed.
 CREATE TABLE IF NOT EXISTS rate_limits (
   ip_hash   TEXT NOT NULL,
   day       TEXT NOT NULL,

@@ -48,7 +48,13 @@ export async function fetchRepo(
   };
 }
 
-/** Resolve a branch, tag or short sha to the full commit sha we pin to. */
+/**
+ * Resolve a branch, tag or short sha to the full commit sha we pin to.
+ *
+ * The ref is encoded segment by segment. A slash inside a branch name is part
+ * of the path GitHub expects, and percent-encoding it makes the commits
+ * endpoint reject the request, so `release/1.x` would never resolve.
+ */
 export async function resolveSha(
   f: Fetcher,
   owner: string,
@@ -56,9 +62,13 @@ export async function resolveSha(
   ref: string,
 ): Promise<string | null> {
   const r = await f.json<{ sha: string }>(
-    `${API}/repos/${owner}/${name}/commits/${encodeURIComponent(ref)}`,
+    `${API}/repos/${owner}/${name}/commits/${encodeRef(ref)}`,
   );
   return r?.sha ?? null;
+}
+
+export function encodeRef(ref: string): string {
+  return ref.split("/").map(encodeURIComponent).join("/");
 }
 
 /**

@@ -1,8 +1,8 @@
 import { collect, resolveTarget, TargetNotFound } from "./collect";
 import { readConfig, type Config, type Env } from "./env";
 import { Fetcher } from "./lib/fetcher";
-import { InvalidTarget, parseTarget } from "./lib/target";
-import { hashIp, Store } from "./store";
+import { cacheKeyFor, InvalidTarget, parseTarget, registryQualifier } from "./lib/target";
+import { hashIp, Store, utcDay } from "./store";
 import type { StoredVerdict } from "./types";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
 import { buildReport } from "./verdict/score";
@@ -109,8 +109,13 @@ async function handleAnalyse(
   }
 
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  const ipHash = await hashIp(ip, resolved.target.host);
-  const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
+  const ipHash = await hashIp(ip, {
+    day: utcDay(),
+    ...(config.rateLimitSalt ? { secret: config.rateLimitSalt } : {}),
+  });
+  // Checked before the work, consumed after it. A collection or model failure
+  // must not spend a slot on an analysis that produced nothing.
+  const limit = await store.checkRateLimit(ipHash, config.ratePerDay);
   if (!limit.allowed) {
     return messagePage({
       title: "Daily limit reached - chainoftrust.dev",
@@ -133,6 +138,7 @@ async function handleAnalyse(
   await store.recordSpend(summary.microCents);
 
   await store.putVerdict(report, summary.text, summary.model);
+  await store.consumeRateLimit(ipHash, config.ratePerDay);
   return redirect(verdictPath(report));
 }
 
@@ -166,8 +172,11 @@ async function handleVerdictLookup(
   const wantsJson =
     url.searchParams.get("format") === "json" || url.pathname.startsWith("/api/");
 
+  // The path names a commit, not a cache row, and one commit can hold both a
+  // bare repository report and a registry-qualified one. `?pkg=npm:name` picks
+  // a specific row; without it the newest report for that commit is served.
   const stored: StoredVerdict | null = match.sha
-    ? await store.getVerdict(`github:${match.owner.toLowerCase()}/${match.name.toLowerCase()}@${match.sha}`)
+    ? await lookupAtCommit(store, match.owner, match.name, match.sha, url.searchParams.get("pkg"))
     : await store.getLatestForRepo(match.owner, match.name);
 
   if (!stored) {
@@ -210,6 +219,22 @@ async function handleVerdictLookup(
   }
 
   return verdictPage(stored, config.contact);
+}
+
+async function lookupAtCommit(
+  store: Store,
+  owner: string,
+  name: string,
+  sha: string,
+  pkg: string | null,
+): Promise<StoredVerdict | null> {
+  const registry = pkg ? registryQualifier(pkg) : null;
+  if (registry) {
+    const exact = await store.getVerdict(cacheKeyFor(owner, name, sha, registry));
+    if (exact) return exact;
+  }
+  const plain = await store.getVerdict(cacheKeyFor(owner, name, sha));
+  return plain ?? (await store.getVerdictAtCommit(owner, name, sha));
 }
 
 function redirect(location: string): Response {
