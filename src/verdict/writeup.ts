@@ -193,17 +193,21 @@ export function renderEvidence(report: Report, nonceOverride?: string): string {
  * belt and braces on top of the nonce and the system prompt: three independent
  * measures, because prompt injection via repository content is the exact hazard
  * this product exists to warn about.
+ *
+ * Deliberately narrow. Prose is the deliberate high-value input to the write-up,
+ * so only the fence markers, an envelope tag, and a line that is nothing but one
+ * of this envelope's own headers are neutralised. A maintainer who writes
+ * "we publish our findings within 90 days" or "System: Linux only" reaches the
+ * model with that sentence intact. Target text cannot occupy a line of its own
+ * in any case: every excerpt and statement is collapsed to one line here and
+ * emitted behind a prefix.
  */
 function sanitise(text: string): string {
   return text
     .replace(/END-UNTRUSTED-\w+/gi, "[removed]")
     .replace(/UNTRUSTED-\w+/gi, "[removed]")
     .replace(/<\/?(system|instructions?|important)[^>]*>/gi, "[removed]")
-    // The section headers and role labels this envelope uses. A repository that
-    // reproduces one of them could otherwise appear to end the evidence and
-    // start speaking as the sender.
-    .replace(/\b(?:end\s+of\s+)?(?:findings|not\s+checked)\b/gi, "[removed]")
-    .replace(/\b(system|assistant|human|user)\s*:/gi, "[removed]")
+    .replace(/^[ \t]*(?:end\s+of\s+)?(?:findings|not[ \t]+checked)[ \t]*:?[ \t]*$/gim, "[removed]")
     .replace(/\s+/g, " ")
     .trim();
 }
