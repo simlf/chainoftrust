@@ -122,24 +122,47 @@ export class Store {
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
     const day = utcDay();
+    const atLimit: RateLimitResult = { allowed: false, used: limit + 1, limit };
 
-    // RETURNING makes the increment and the count one round trip. Reading the
-    // count back in a second statement would let concurrent submissions see the
-    // same value and all decide they were within the limit.
-    const row = await this.db
-      .prepare(
-        `INSERT INTO rate_limits (ip_hash, day, count) VALUES (?, ?, 1)
-         ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1
-         RETURNING count`,
-      )
-      .bind(ipHash, day)
-      .first<{ count: number }>();
+    let used: number | null = null;
+    try {
+      // RETURNING makes the increment and the count one round trip. Reading the
+      // count back separately would let concurrent submissions see the same
+      // value and all decide they were within the limit.
+      const row = await this.db
+        .prepare(
+          `INSERT INTO rate_limits (ip_hash, day, count) VALUES (?, ?, 1)
+           ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1
+           RETURNING count`,
+        )
+        .bind(ipHash, day)
+        .first<{ count: number }>();
+      used = typeof row?.count === "number" ? row.count : null;
+
+      if (used === null) {
+        const readBack = await this.db
+          .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
+          .bind(ipHash, day)
+          .first<{ count: number }>();
+        used = typeof readBack?.count === "number" ? readBack.count : null;
+      }
+    } catch {
+      return atLimit;
+    }
+
+    // A counter nobody can read is treated as spent. A storage fault that made
+    // the limiter answer "not yet at the limit" would disable the daily cap for
+    // every address at once, which is the one direction it must never fail in.
+    if (used === null) return atLimit;
 
     // Yesterday's counters answer no question anyone can ask, and nothing else
     // ever deletes them, so the table would grow for the life of the deployment.
-    await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
+    try {
+      await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
+    } catch {
+      // The prune is housekeeping. Failing it does not change the decision.
+    }
 
-    const used = row?.count ?? 1;
     return { allowed: used <= limit, used, limit };
   }
 

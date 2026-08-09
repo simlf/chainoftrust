@@ -107,7 +107,9 @@ export interface RegistryKey {
   version?: string;
 }
 
-const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,64}$/;
+// Wide enough for the version strings npm and PyPI actually publish, including
+// a PEP 440 epoch such as 1!2.0 and a local segment such as 1.0.0+build.1.
+const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_!~-]{0,64}$/;
 
 /**
  * Canonical, URL-safe identity used as the D1 primary key.
@@ -129,9 +131,23 @@ export function cacheKeyFor(
   registry?: RegistryKey,
 ): string {
   const base = `github:${owner.toLowerCase()}/${name.toLowerCase()}@${sha}`;
-  if (!registry) return base;
-  const version = registry.version ? `@${registry.version.toLowerCase()}` : "";
-  return `${base}#${registry.kind}:${registry.packageName.toLowerCase()}${version}`;
+  return registry ? `${base}#${registryQualifierFor(registry)}` : base;
+}
+
+/**
+ * The qualifier that names a registry report, in the one form both the cache
+ * key and the verdict URL use.
+ *
+ * A version the reader's parser could not recognise is dropped here rather than
+ * written into the key, so the report a redirect points at is always the report
+ * that lookup finds. Two identities that disagree would strand a report behind
+ * a 404 that no resubmission could clear, because the cache would keep hitting.
+ */
+export function registryQualifierFor(registry: RegistryKey): string {
+  const name = registry.packageName.toLowerCase();
+  const raw = registry.version?.toLowerCase();
+  const version = raw && VERSION.test(raw) ? `@${raw}` : "";
+  return `${registry.kind}:${name}${version}`;
 }
 
 /** The `npm:pkg@version` qualifier a verdict URL carries. */

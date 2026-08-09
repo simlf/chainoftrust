@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { cacheKeyFor } from "../src/lib/target";
 import { hashIp, Store } from "../src/store";
 import type { Report } from "../src/types";
+import { verdictPath } from "../src/ui/pages";
 
 interface VerdictRow {
   cache_key: string;
@@ -19,14 +20,17 @@ interface VerdictRow {
  * understands only those shapes and throws on anything else, so a query this
  * fake does not model cannot pass silently.
  */
-function fakeDb() {
+function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; broken?: boolean } = {}) {
   const counters = new Map<string, number>();
   const verdicts: VerdictRow[] = [];
+  const returning = opts.returning ?? "row";
+  const counterReadable = opts.counterReadable ?? true;
 
   const db = {
     counters,
     verdicts,
     prepare(sql: string) {
+      if (opts.broken) throw new Error("storage unavailable");
       const text = sql.replace(/\s+/g, " ").trim();
       let args: unknown[] = [];
       const stmt = {
@@ -54,9 +58,12 @@ function fakeDb() {
             const key = `${args[0]}|${args[1]}`;
             const count = (counters.get(key) ?? 0) + 1;
             counters.set(key, count);
-            return { count } as T;
+            // D1 documents an empty result set for write statements, so a
+            // driver that ignores RETURNING is a shape this has to survive.
+            return returning === "row" ? ({ count } as T) : null;
           }
           if (text.startsWith("SELECT count FROM rate_limits")) {
+            if (!counterReadable) return null;
             const count = counters.get(`${args[0]}|${args[1]}`);
             return count === undefined ? null : ({ count } as T);
           }
@@ -139,6 +146,29 @@ describe("rate limiting", () => {
     expect(db.counters.get(`ip|${today}`) ?? 0).toBe(0);
   });
 
+  it("still counts when the driver returns no row for a write statement", async () => {
+    const db = fakeDb({ returning: "none" });
+    const store = new Store(db as never);
+
+    for (let i = 0; i < 5; i++) {
+      expect((await store.consumeRateLimit("ip", 5)).allowed, `attempt ${i}`).toBe(true);
+    }
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false, used: 6 });
+  });
+
+  it("refuses when the counter cannot be read at all", async () => {
+    // Failing open here would disable the daily cap for every address at once.
+    const db = fakeDb({ returning: "none", counterReadable: false });
+    const store = new Store(db as never);
+
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false });
+  });
+
+  it("refuses when the storage errors", async () => {
+    const store = new Store(fakeDb({ broken: true }) as never);
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false });
+  });
+
   it("drops counters from days that have passed", async () => {
     const db = fakeDb();
     const store = new Store(db as never);
@@ -190,6 +220,42 @@ describe("which report a verdict URL resolves to", () => {
     expect(await store.getVerdictForQuery("o", "r", sha, "npm:uv@1.0.0")).toBeNull();
     expect(await store.getVerdictForQuery("o", "r", sha, "npm:uv@2.0.0")).toBeNull();
     expect(await store.getVerdictForQuery("o", "r", sha, "not-a-package-ref")).toBeNull();
+  });
+
+  it("finds the report through the address that report advertises", async () => {
+    // Round trip: what the redirect points at is what lookup resolves, for a
+    // version string the URL parser would otherwise have refused.
+    for (const version of ["0.9.0", "1!2.0", "1.0.0+build.1", "nonsense version"]) {
+      const registry = { kind: "pypi" as const, packageName: "uv", version };
+      const key = cacheKeyFor("o", "r", sha, registry);
+
+      const db = fakeDb();
+      db.verdicts.push(storedRow(key, { sha, owner: "o", name: "r" }));
+      const store = new Store(db as never);
+
+      const advertised = new URL(
+        `https://chainoftrust.dev${verdictPath({
+          target: {
+            cacheKey: key,
+            host: "github",
+            owner: "o",
+            name: "r",
+            requestedRef: "",
+            sha,
+            defaultBranch: "main",
+            registry,
+          },
+        } as Report)}`,
+      );
+
+      const found = await store.getVerdictForQuery(
+        "o",
+        "r",
+        sha,
+        advertised.searchParams.get("pkg"),
+      );
+      expect(found?.report.target.cacheKey, version).toBe(key);
+    }
   });
 
   it("keeps one published version from answering for another", async () => {
