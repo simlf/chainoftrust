@@ -122,6 +122,9 @@ async function handleAnalyse(
         status: 404,
       });
     }
+    // An upstream fault produced nothing, so a slot spent before resolution is
+    // given back on the same terms as one spent after it.
+    if (slot) await store.refundRateLimit(ipHash, config.ratePerDay);
     throw err;
   }
 

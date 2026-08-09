@@ -9,6 +9,7 @@ import {
 } from "../lib/github";
 import { fetchNpm, fetchPypi, fetchScorecard } from "../lib/registry";
 import type { ParsedInput } from "../lib/target";
+import { label, labelList } from "../lib/label";
 import { cacheKeyFor, isRepoIdentifier, isSafeRef } from "../lib/target";
 import type { Evidence, Finding, NotChecked, TargetRef, TreeEntry } from "../types";
 import { analyseHookManifest, scanAgentConfig } from "./agent-config";
@@ -291,8 +292,8 @@ function installPathFindings(
         check: "install-path",
         severity: "clean",
         concern: "install-path:verification",
-        statement: `The latest release publishes integrity files (${checksumAssets.slice(0, 3).join(", ")}). No install script is committed to the repository, so how they are consumed depends on the instructions you follow.`,
-        evidence: `release ${release?.tag}`,
+        statement: `The latest release publishes integrity files (${labelList(checksumAssets, 3)}). No install script is committed to the repository, so how they are consumed depends on the instructions you follow.`,
+        evidence: `release ${label(release?.tag ?? "")}`,
         method: "api",
       });
     }
@@ -302,8 +303,9 @@ function installPathFindings(
   for (const script of scripts) {
     const a = analyseShell(script.text);
     const v = a.verification;
+    const path = label(script.path);
     const cite = (lines: { n: number }[]) =>
-      `${script.path}:${lines.slice(0, 3).map((l) => l.n).join(",")}`;
+      `${path}:${lines.slice(0, 3).map((l) => l.n).join(",")}`;
 
     switch (v.state) {
       case "absent":
@@ -313,10 +315,9 @@ function installPathFindings(
           concern: "install-path:verification-absent",
           statement:
             a.downloads.length > 0
-              ? `${script.path} downloads a file and never verifies it. No hashing or signature tool is invoked anywhere in its ${a.lineCount} lines.`
-              : `${script.path} invokes no hashing or signature tool.`,
-          evidence:
-            a.downloads.length > 0 ? cite(a.downloads) : `${script.path}, whole file`,
+              ? `${path} downloads a file and never verifies it. No hashing or signature tool is invoked anywhere in its ${a.lineCount} lines.`
+              : `${path} invokes no hashing or signature tool.`,
+          evidence: a.downloads.length > 0 ? cite(a.downloads) : `${path}, whole file`,
           method: "file",
         });
         break;
@@ -325,7 +326,7 @@ function installPathFindings(
           check: "install-path",
           severity: "critical",
           concern: "install-path:verification-unreachable",
-          statement: `${script.path} contains checksum-verification code that cannot run. It reads ${v.unassignedVars.join(", ")}, and nothing in the script ever assigns ${v.unassignedVars.length === 1 ? "that variable" : "those variables"}, so the comparison always takes the branch that skips verification.`,
+          statement: `${path} contains checksum-verification code that cannot run. It reads ${labelList(v.unassignedVars)}, and nothing in the script ever assigns ${v.unassignedVars.length === 1 ? "that variable" : "those variables"}, so the comparison always takes the branch that skips verification.`,
           evidence: cite(v.tooling.length > 0 ? v.tooling : a.downloads),
           method: "file",
         });
@@ -341,8 +342,8 @@ function installPathFindings(
           concern: "install-path:verification-skippable",
           statement:
             v.abortSites.length > 0
-              ? `${script.path} verifies its download and stops on a mismatch, but has a path that continues without verifying, so on a machine that takes that path the download is not checked.`
-              : `${script.path} can complete without verifying what it downloaded. Its hash comparison is not followed by anything that stops the script on a mismatch.`,
+              ? `${path} verifies its download and stops on a mismatch, but has a path that continues without verifying, so on a machine that takes that path the download is not checked.`
+              : `${path} can complete without verifying what it downloaded. Its hash comparison is not followed by anything that stops the script on a mismatch.`,
           evidence: cite(v.skipPaths.length > 0 ? v.skipPaths : v.tooling),
           method: "file",
         });
@@ -352,7 +353,7 @@ function installPathFindings(
           check: "install-path",
           severity: "clean",
           concern: "install-path:verification",
-          statement: `${script.path} verifies the file it downloaded and stops on a mismatch.`,
+          statement: `${path} verifies the file it downloaded and stops on a mismatch.`,
           evidence: cite(v.abortSites.length > 0 ? v.abortSites : v.tooling),
           method: "file",
         });
@@ -368,8 +369,8 @@ function installPathFindings(
           check: "install-path",
           severity: "warning",
           concern: "install-path:unused-integrity-assets",
-          statement: `The latest release publishes ${checksumAssets.slice(0, 3).join(", ")}, and ${script.path} never references ${checksumAssets.length === 1 ? "it" : "any of them"}. The integrity files exist and this install path does not use them.`,
-          evidence: `release ${release?.tag} assets, ${script.path}`,
+          statement: `The latest release publishes ${labelList(checksumAssets, 3)}, and ${path} never references ${checksumAssets.length === 1 ? "it" : "any of them"}. The integrity files exist and this install path does not use them.`,
+          evidence: `release ${label(release?.tag ?? "")} assets, ${path}`,
           method: "api",
         });
       }
@@ -380,7 +381,7 @@ function installPathFindings(
         check: "install-path",
         severity: "note",
         concern: "install-path:pipe-to-shell",
-        statement: `${script.path} pipes downloaded content directly into a shell.`,
+        statement: `${path} pipes downloaded content directly into a shell.`,
         evidence: cite(a.pipeToShell),
         method: "file",
       });
@@ -391,7 +392,7 @@ function installPathFindings(
         check: "install-path",
         severity: "warning",
         concern: "install-path:sudo",
-        statement: `${script.path} runs ${a.sudo.length} command${a.sudo.length === 1 ? "" : "s"} with elevated privileges. What it installs is not confined to your home directory.`,
+        statement: `${path} runs ${a.sudo.length} command${a.sudo.length === 1 ? "" : "s"} with elevated privileges. What it installs is not confined to your home directory.`,
         evidence: cite(a.sudo),
         method: "file",
       });
@@ -400,8 +401,8 @@ function installPathFindings(
         check: "install-path",
         severity: "clean",
         concern: "install-path:sudo",
-        statement: `${script.path} never asks for root.`,
-        evidence: `${script.path}, whole file`,
+        statement: `${path} never asks for root.`,
+        evidence: `${path}, whole file`,
         method: "file",
       });
     }
@@ -411,7 +412,7 @@ function installPathFindings(
         check: "install-path",
         severity: "warning",
         concern: "install-path:executes-download",
-        statement: `${script.path} runs the artefact it just downloaded, rather than only placing it on PATH.`,
+        statement: `${path} runs the artefact it just downloaded, rather than only placing it on PATH.`,
         evidence: cite(a.executesDownload),
         method: "file",
       });
@@ -422,7 +423,7 @@ function installPathFindings(
         check: "install-path",
         severity: "warning",
         concern: "install-path:residency",
-        statement: `${script.path} leaves something running after it exits: it registers a service or background agent that starts on its own.`,
+        statement: `${path} leaves something running after it exits: it registers a service or background agent that starts on its own.`,
         evidence: cite(a.residency),
         method: "file",
       });
@@ -433,7 +434,7 @@ function installPathFindings(
         check: "agent-config",
         severity: "critical",
         concern: "agent-config:installer-writes",
-        statement: `${script.path} writes to agent configuration paths. Installing this changes how your agent behaves in every later session, not just this one.`,
+        statement: `${path} writes to agent configuration paths. Installing this changes how your agent behaves in every later session, not just this one.`,
         evidence: cite(a.agentConfigWrites),
         method: "file",
       });
@@ -445,8 +446,8 @@ function installPathFindings(
         check: "blast-radius",
         severity: "note",
         concern: "blast-radius:credentials",
-        statement: `${script.path} reads ${creds.length} credential-shaped environment variable${creds.length === 1 ? "" : "s"}: ${creds.join(", ")}. Whether that is benign depends on the surrounding code path, which this report does not judge.`,
-        evidence: `${script.path}, environment reads`,
+        statement: `${path} reads ${creds.length} credential-shaped environment variable${creds.length === 1 ? "" : "s"}: ${labelList(creds)}. Whether that is benign depends on the surrounding code path, which this report does not judge.`,
+        evidence: `${path}, environment reads`,
         method: "file",
       });
     }
@@ -456,8 +457,8 @@ function installPathFindings(
         check: "blast-radius",
         severity: a.outboundHosts.length > 4 ? "note" : "clean",
         concern: "blast-radius:hosts",
-        statement: `${script.path} contacts ${a.outboundHosts.length} host${a.outboundHosts.length === 1 ? "" : "s"}: ${a.outboundHosts.slice(0, 6).join(", ")}.`,
-        evidence: `${script.path}, URL literals`,
+        statement: `${path} contacts ${a.outboundHosts.length} host${a.outboundHosts.length === 1 ? "" : "s"}: ${labelList(a.outboundHosts)}.`,
+        evidence: `${path}, URL literals`,
         method: "file",
       });
     }
@@ -496,9 +497,9 @@ async function provenanceFindings(
       severity: info.hasAttestations ? "clean" : "warning",
       concern: "registry-provenance:attestation",
       statement: info.hasAttestations
-        ? `The npm entry for ${info.name}@${info.version} carries a provenance attestation, which ties the published tarball to the CI run that built it.`
-        : `The npm entry for ${info.name}@${info.version} carries no provenance attestation. Nothing published alongside the tarball ties it to a specific build.`,
-      evidence: `registry.npmjs.org/${info.name} dist.attestations`,
+        ? `The npm entry for ${label(info.name)}@${label(info.version)} carries a provenance attestation, which ties the published tarball to the CI run that built it.`
+        : `The npm entry for ${label(info.name)}@${label(info.version)} carries no provenance attestation. Nothing published alongside the tarball ties it to a specific build.`,
+      evidence: `registry.npmjs.org/${label(info.name)} dist.attestations`,
       method: "registry",
     });
 
@@ -509,8 +510,8 @@ async function provenanceFindings(
       concern: "registry-provenance:publisher",
       statement: viaOidc
         ? `The package was published by CI over OIDC rather than with a long-lived personal token.`
-        : `The package was published by ${info.publishedBy ?? "an account the registry does not name"}, which indicates a long-lived publish token rather than CI over OIDC.`,
-      evidence: `registry.npmjs.org/${info.name} _npmUser`,
+        : `The package was published by ${info.publishedBy ? label(info.publishedBy) : "an account the registry does not name"}, which indicates a long-lived publish token rather than CI over OIDC.`,
+      evidence: `registry.npmjs.org/${label(info.name)} _npmUser`,
       method: "registry",
     });
 
@@ -525,9 +526,9 @@ async function provenanceFindings(
         concern: "trust-root:publish-rights",
         statement:
           info.maintainers.length === 1
-            ? `One npm account can publish this package: ${info.maintainers[0]}. A single compromised publish token reaches every version.`
-            : `${info.maintainers.length} npm accounts can publish this package: ${info.maintainers.slice(0, 5).join(", ")}.`,
-        evidence: `registry.npmjs.org/${info.name} maintainers`,
+            ? `One npm account can publish this package: ${label(info.maintainers[0]!)}. A single compromised publish token reaches every version.`
+            : `${info.maintainers.length} npm accounts can publish this package: ${labelList(info.maintainers, 5)}.`,
+        evidence: `registry.npmjs.org/${label(info.name)} maintainers`,
         method: "registry",
       });
     }
@@ -542,8 +543,8 @@ async function provenanceFindings(
           check: "registry-provenance",
           severity: "note",
           concern: "registry-provenance:name-confusion",
-          statement: `A separate npm package named ${neighbour} also exists, published by ${other.maintainers.join(", ") || "an unnamed account"}${other.hasAttestations ? "" : " with no provenance attestation"}. Nothing in the name distinguishes which one you meant.`,
-          evidence: `registry.npmjs.org/${neighbour}`,
+          statement: `A separate npm package named ${label(neighbour)} also exists, published by ${other.maintainers.length > 0 ? labelList(other.maintainers, 5) : "an unnamed account"}${other.hasAttestations ? "" : " with no provenance attestation"}. Nothing in the name distinguishes which one you meant.`,
+          evidence: `registry.npmjs.org/${label(neighbour)}`,
           method: "registry",
         });
       }
@@ -556,9 +557,9 @@ async function provenanceFindings(
       severity: info.hasProvenance ? "clean" : "warning",
       concern: "registry-provenance:attestation",
       statement: info.hasProvenance
-        ? `The PyPI entry for ${info.name} ${info.version} carries a PEP 740 attestation binding the files to the workflow that published them.`
-        : `The PyPI entry for ${info.name} ${info.version} carries no PEP 740 attestation and no signature. Nothing binds the published files to a specific build.`,
-      evidence: `pypi.org/pypi/${info.name}/json urls[].provenance`,
+        ? `The PyPI entry for ${label(info.name)} ${label(info.version)} carries a PEP 740 attestation binding the files to the workflow that published them.`
+        : `The PyPI entry for ${label(info.name)} ${label(info.version)} carries no PEP 740 attestation and no signature. Nothing binds the published files to a specific build.`,
+      evidence: `pypi.org/pypi/${label(info.name)}/json urls[].provenance`,
       method: "registry",
     });
     notChecked.push(
@@ -603,7 +604,7 @@ async function trustRootFindings(
       check: "trust-root",
       severity: "note",
       concern: "trust-root:lineage",
-      statement: `This is a fork of ${meta.parentFullName}${meta.parentArchived ? ", which is itself archived" : ""}. Claims about the upstream project do not automatically describe this fork, and the reverse is also true.`,
+      statement: `This is a fork of ${label(meta.parentFullName)}${meta.parentArchived ? ", which is itself archived" : ""}. Claims about the upstream project do not automatically describe this fork, and the reverse is also true.`,
       evidence: "GitHub repository fork and parent fields",
       method: "api",
     });
@@ -628,7 +629,7 @@ async function trustRootFindings(
       concern: "trust-root:concentration",
       statement:
         share >= 90
-          ? `One account, ${contributors.topLogin}, accounts for about ${share}% of commits among the ${contributors.total} most active contributors. The trust root is effectively one person.`
+          ? `One account, ${label(contributors.topLogin ?? "")}, accounts for about ${share}% of commits among the ${contributors.total} most active contributors. The trust root is effectively one person.`
           : `Among the ${contributors.total} most active contributors, the busiest (${contributors.topLogin}) accounts for about ${share}% of commits.`,
       evidence: "GitHub contributors API, first page",
       method: "api",

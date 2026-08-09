@@ -1,3 +1,4 @@
+import { label, labelList } from "../lib/label";
 import type { Finding, TreeEntry } from "../types";
 
 /**
@@ -104,7 +105,7 @@ export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
   for (const pattern of PATTERNS) {
     const paths = matched.get(pattern.label);
     if (!paths || paths.length === 0) continue;
-    const shown = paths.slice(0, 3).join(", ");
+    const shown = labelList(paths, 3);
     const more = paths.length > 3 ? ` and ${paths.length - 3} more` : "";
     findings.push({
       check: "agent-config",
@@ -159,8 +160,8 @@ export function analyseHookManifest(path: string, source: string): Finding[] {
       check: "agent-config",
       severity: "warning",
       concern: "agent-config:hooks",
-      statement: `The hook manifest registers ${events.size} lifecycle hook${events.size === 1 ? "" : "s"}: ${[...events].sort().join(", ")}. Hooks run when their event fires, without the user invoking anything by name.`,
-      evidence: path,
+      statement: `The hook manifest registers ${events.size} lifecycle hook${events.size === 1 ? "" : "s"}: ${labelList([...events].sort())}. Hooks run when their event fires, without the user invoking anything by name.`,
+      evidence: label(path),
       method: "file",
     },
   ];
@@ -171,7 +172,7 @@ export function analyseHookManifest(path: string, source: string): Finding[] {
       severity: "note",
       concern: "agent-config:hook-commands",
       statement: `The hook manifest runs ${commands.length} command${commands.length === 1 ? "" : "s"}. The first is quoted verbatim.`,
-      evidence: path,
+      evidence: label(path),
       method: "file",
       quote: commands[0]!,
     });
@@ -186,7 +187,7 @@ export function analyseHookManifest(path: string, source: string): Finding[] {
       severity: "warning",
       concern: "agent-config:self-flagged",
       statement: "The hook manifest marks itself unaudited. The field it does that with is quoted verbatim.",
-      evidence: path,
+      evidence: label(path),
       method: "file",
       quote: selfFlag[0],
     });
