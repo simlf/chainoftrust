@@ -220,10 +220,11 @@ export function estimateWorstCaseMicroCents(report: Report, rate: TokenRate): nu
 /**
  * Did this failure plausibly reach inference?
  *
- * A rate limit or a server error can arrive after the prompt was read, and so
- * can a response that fails to parse. A 4xx rejection, a connection that never
- * opened and anything with no status at all did not, and the ledger is better
- * off under-counting those than locking the write-up off for a whole month.
+ * A rate limit or a server error can arrive after the prompt was read, so those
+ * are charged. Everything else is not: a 4xx rejection, a connection that never
+ * opened, and any error carrying no status, which includes a failure raised
+ * after a response arrived. The ledger is better off under-counting those than
+ * locking the write-up off for the rest of the month.
  */
 function couldHaveConsumedTokens(err: unknown): boolean {
   if (err instanceof Anthropic.APIConnectionError) return false;

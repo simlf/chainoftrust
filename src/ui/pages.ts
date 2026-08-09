@@ -1,3 +1,4 @@
+import { registryQualifierFor } from "../lib/target";
 import type { Report, StoredVerdict } from "../types";
 import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
 import { esc, page } from "./layout";
@@ -108,9 +109,7 @@ function finding(f: Report["findings"][number]): string {
 export function verdictPath(r: Report): string {
   const path = `/r/github/${encodeURIComponent(r.target.owner)}/${encodeURIComponent(r.target.name)}/${encodeURIComponent(r.target.sha)}`;
   const reg = r.target.registry;
-  return reg
-    ? `${path}?pkg=${encodeURIComponent(`${reg.kind}:${reg.packageName}@${reg.version}`)}`
-    : path;
+  return reg ? `${path}?pkg=${encodeURIComponent(registryQualifierFor(reg))}` : path;
 }
 
 export function verdictJsonPath(r: Report): string {

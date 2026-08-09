@@ -46,6 +46,34 @@ describe("a report's own address", () => {
     );
   });
 
+  it("reaches the stored report for every version a registry can publish", () => {
+    // The report is written under the key the URL resolves to, or a redirect
+    // lands on a 404 that resubmitting cannot clear, because the cache keeps
+    // hitting the same unreachable row. Includes a PEP 440 epoch and a local
+    // segment, and a version too strange for the URL to carry.
+    const versions = [
+      "0.9.0",
+      "1!2.0",
+      "1.0.0+build.1",
+      "2.0.0-rc.1",
+      "1.0.0~alpha",
+      "not a version at all",
+      "../../etc/passwd",
+    ];
+
+    for (const version of versions) {
+      const registry = { kind: "pypi" as const, packageName: "uv", version };
+      const storedKey = cacheKeyFor("astral-sh", "uv", "abc123", registry);
+
+      const url = new URL(`https://chainoftrust.dev${verdictPath(report(registry))}`);
+      expect(url.pathname, version).toBe("/r/github/astral-sh/uv/abc123");
+
+      const qualifier = registryQualifier(url.searchParams.get("pkg") ?? "");
+      expect(qualifier, version).not.toBeNull();
+      expect(cacheKeyFor("astral-sh", "uv", "abc123", qualifier!), version).toBe(storedKey);
+    }
+  });
+
   it("appends the JSON format parameter to either shape", () => {
     expect(verdictJsonPath(report())).toContain("?format=json");
     const withPkg = verdictJsonPath(
