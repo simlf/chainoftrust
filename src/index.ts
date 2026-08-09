@@ -113,8 +113,10 @@ async function handleAnalyse(
     day: utcDay(),
     ...(config.rateLimitSalt ? { secret: config.rateLimitSalt } : {}),
   });
-  // Consumed in one statement before the work, and refunded if the work fails.
-  // The increment is what serialises concurrent submissions from one address.
+  // Consumed in one statement before the work. A failed analysis is refunded a
+  // bounded number of times per day, so the limit bounds the work an address
+  // can drive rather than only the reports it gets. The increment is what
+  // serialises concurrent submissions from one address.
   const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
   if (!limit.allowed) {
     return messagePage({
@@ -141,7 +143,7 @@ async function handleAnalyse(
     await store.putVerdict(report, summary.text, summary.model);
     return redirect(verdictPath(report));
   } catch (err) {
-    await store.refundRateLimit(ipHash);
+    await store.refundRateLimit(ipHash, config.ratePerDay);
     throw err;
   }
 }

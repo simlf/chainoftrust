@@ -9,7 +9,7 @@ import {
 } from "../lib/github";
 import { fetchNpm, fetchPypi, fetchScorecard } from "../lib/registry";
 import type { ParsedInput } from "../lib/target";
-import { cacheKeyFor } from "../lib/target";
+import { cacheKeyFor, isRepoIdentifier } from "../lib/target";
 import type { Evidence, Finding, NotChecked, TargetRef, TreeEntry } from "../types";
 import { analyseHookManifest, scanAgentConfig } from "./agent-config";
 import { analysePackageJson, analysePyproject } from "./manifest";
@@ -235,13 +235,20 @@ async function resolveRepository(
       `The ${input.kind} package "${input.name}" does not declare a GitHub repository, so there is no source to read.`,
     );
   }
-  const [owner, name] = info.repositoryUrl.replace(/^https?:\/\/github\.com\//, "").split("/");
-  if (!owner || !name) {
+  const [rawOwner, rawName] = info.repositoryUrl
+    .replace(/^https?:\/\/github\.com\//, "")
+    .split("/");
+  const owner = rawOwner ?? "";
+  const name = (rawName ?? "").replace(/\.git$/, "");
+  // The repository field is text the package publisher controls, and it ends up
+  // inside an api.github.com path, so it passes the same identifier rules a
+  // pasted URL does rather than being trusted because a registry served it.
+  if (!isRepoIdentifier(owner, name)) {
     throw new TargetNotFound(`Could not read a repository out of "${info.repositoryUrl}".`);
   }
   return {
     owner,
-    name: name.replace(/\.git$/, ""),
+    name,
     requestedRef: "",
     registry: { kind: input.kind, packageName: info.name, version: info.version },
   };

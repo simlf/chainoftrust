@@ -130,20 +130,48 @@ describe("rate limiting", () => {
     const store = new Store(db as never);
 
     await store.consumeRateLimit("ip", 5);
-    await store.refundRateLimit("ip");
+    expect(await store.refundRateLimit("ip", 5)).toBe(true);
 
     expect(db.counters.get(`ip|${today}`)).toBe(0);
     expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ used: 1, allowed: true });
+  });
+
+  it("stops refunding a submission that keeps failing", async () => {
+    // An unbounded refund makes a target that fails every time free to replay,
+    // and every replay still drives a full collection against GitHub.
+    const db = fakeDb();
+    const store = new Store(db as never);
+
+    const attempts: boolean[] = [];
+    for (let i = 0; i < 12; i++) {
+      const consumed = await store.consumeRateLimit("ip", 5);
+      if (!consumed.allowed) {
+        attempts.push(false);
+        continue;
+      }
+      attempts.push(await store.refundRateLimit("ip", 5));
+    }
+
+    expect(attempts.filter(Boolean)).toHaveLength(5);
+    expect(attempts.at(-1)).toBe(false);
+    expect((await store.consumeRateLimit("ip", 5)).allowed).toBe(false);
   });
 
   it("never refunds below zero", async () => {
     const db = fakeDb();
     const store = new Store(db as never);
 
-    await store.refundRateLimit("ip");
-    await store.refundRateLimit("ip");
+    await store.refundRateLimit("ip", 5);
+    await store.refundRateLimit("ip", 5);
 
     expect(db.counters.get(`ip|${today}`) ?? 0).toBe(0);
+  });
+
+  it("does not refund when the refund counter cannot be read", async () => {
+    const db = fakeDb({ returning: "none", counterReadable: false });
+    const store = new Store(db as never);
+
+    expect(await store.refundRateLimit("ip", 5)).toBe(false);
   });
 
   it("still counts when the driver returns no row for a write statement", async () => {
