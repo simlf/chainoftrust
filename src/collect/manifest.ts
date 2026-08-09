@@ -37,9 +37,10 @@ export function analysePackageJson(path: string, source: string): Finding[] {
       check: "install-path",
       severity: "warning",
       concern: "install-path:lifecycle-scripts",
-      statement: `Installing this package runs ${present.length} lifecycle script${present.length === 1 ? "" : "s"} automatically: ${present.map((n) => `${n} (${truncate(scripts[n]!)})`).join("; ")}.`,
+      statement: `Installing this package runs ${present.length} lifecycle script${present.length === 1 ? "" : "s"} automatically: ${present.join(", ")}. What they run is quoted verbatim.`,
       evidence: `${path} scripts`,
       method: "file",
+      quote: present.map((n) => `${n}: ${truncate(scripts[n]!)}`).join("; "),
     });
   } else {
     findings.push({

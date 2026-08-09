@@ -170,9 +170,10 @@ export function analyseHookManifest(path: string, source: string): Finding[] {
       check: "agent-config",
       severity: "note",
       concern: "agent-config:hook-commands",
-      statement: `The hook manifest runs ${commands.length} command${commands.length === 1 ? "" : "s"}. First: ${commands[0]}`,
+      statement: `The hook manifest runs ${commands.length} command${commands.length === 1 ? "" : "s"}. The first is quoted verbatim.`,
       evidence: path,
       method: "file",
+      quote: commands[0]!,
     });
   }
 
@@ -184,9 +185,10 @@ export function analyseHookManifest(path: string, source: string): Finding[] {
       check: "agent-config",
       severity: "warning",
       concern: "agent-config:self-flagged",
-      statement: `The hook manifest marks itself unaudited: ${selfFlag[0]}`,
+      statement: "The hook manifest marks itself unaudited. The field it does that with is quoted verbatim.",
       evidence: path,
       method: "file",
+      quote: selfFlag[0],
     });
   }
 

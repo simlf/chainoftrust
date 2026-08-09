@@ -2,7 +2,7 @@ import { collect, resolveTarget, TargetNotFound } from "./collect";
 import { readConfig, type Config, type Env } from "./env";
 import { Fetcher } from "./lib/fetcher";
 import { InvalidTarget, parseTarget } from "./lib/target";
-import { hashIp, Store, utcDay } from "./store";
+import { hashIp, Store, utcDay, type RateLimitResult } from "./store";
 import type { StoredVerdict } from "./types";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
 import { buildReport } from "./verdict/score";
@@ -11,6 +11,9 @@ import { writeUp } from "./verdict/writeup";
 /** Bounded per analysis. A Worker that cannot loop cannot run up a bill. */
 const FETCH_BUDGET = 34;
 const MAX_FILE_BYTES = 256 * 1024;
+
+/** Submissions per address per UTC day that resolve to no repository at all. */
+const FAILED_RESOLUTIONS_PER_DAY = 10;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -79,6 +82,27 @@ async function handleAnalyse(
     throw err;
   }
 
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  const ipHash = await hashIp(ip, {
+    day: utcDay(),
+    ...(config.rateLimitSalt ? { secret: config.rateLimitSalt } : {}),
+  });
+
+  // Resolving a submission costs an upstream fetch before any slot is spent, so
+  // submissions that resolve to nothing carry a daily ceiling of their own. Up
+  // to that ceiling a typo is free. Past it the submission has to spend one of
+  // the five analysis slots up front, which stops a scripted replay of a name
+  // that does not exist while leaving an address that still has slots able to
+  // analyse something real.
+  const failures = await store.resolutionFailures(ipHash);
+  if (failures === null) return storageFaultPage(config);
+
+  let slot: RateLimitResult | null = null;
+  if (failures >= FAILED_RESOLUTIONS_PER_DAY) {
+    slot = await store.consumeRateLimit(ipHash, config.ratePerDay);
+    if (!slot.allowed) return refusedPage(slot, config);
+  }
+
   const fetcher = new Fetcher({
     budget: FETCH_BUDGET,
     maxBytesPerFile: MAX_FILE_BYTES,
@@ -90,6 +114,7 @@ async function handleAnalyse(
     resolved = await resolveTarget(fetcher, input);
   } catch (err) {
     if (err instanceof TargetNotFound) {
+      await store.recordResolutionFailure(ipHash);
       return homePage({
         contact: config.contact,
         error: err.message,
@@ -105,41 +130,16 @@ async function handleAnalyse(
   // exact behaviour this product wants.
   const cached = await store.getVerdict(resolved.target.cacheKey);
   if (cached) {
+    if (slot) await store.refundRateLimit(ipHash, config.ratePerDay);
     return redirect(verdictPath(cached.report));
   }
 
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  const ipHash = await hashIp(ip, {
-    day: utcDay(),
-    ...(config.rateLimitSalt ? { secret: config.rateLimitSalt } : {}),
-  });
   // Consumed in one statement before the work. A failed analysis is refunded a
   // bounded number of times per day, so the limit bounds the work an address
   // can drive rather than only the reports it gets. The increment is what
   // serialises concurrent submissions from one address.
-  const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
-  if (!limit.allowed) {
-    // A refusal the counter could not confirm is still a refusal, but saying
-    // the visitor spent a quota they may not have spent would be a false
-    // statement on the error page of a product whose claim is verifiable facts.
-    if (limit.reason === "unavailable") {
-      return messagePage({
-        title: "Try again shortly - chainoftrust.dev",
-        heading: "We could not start a fresh analysis",
-        message:
-          "The counter that tracks fresh analyses could not be read, so this submission was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay free and unlimited.",
-        contact: config.contact,
-        status: 503,
-      });
-    }
-    return messagePage({
-      title: "Daily limit reached - chainoftrust.dev",
-      heading: "That is enough fresh analyses for today",
-      message: `This address has run ${limit.limit} new analyses today, which is the limit. Reports that already exist stay free and unlimited, so anything analysed before is still available. The counter resets at midnight UTC.`,
-      contact: config.contact,
-      status: 429,
-    });
-  }
+  const limit = slot ?? (await store.consumeRateLimit(ipHash, config.ratePerDay));
+  if (!limit.allowed) return refusedPage(limit, config);
 
   try {
     const evidence = await collect(fetcher, resolved);
@@ -159,6 +159,33 @@ async function handleAnalyse(
     await store.refundRateLimit(ipHash, config.ratePerDay);
     throw err;
   }
+}
+
+/**
+ * A refusal the counter could not confirm is still a refusal, but saying the
+ * visitor spent a quota they may not have spent would be a false statement on
+ * the error page of a product whose claim is verifiable facts.
+ */
+function refusedPage(limit: RateLimitResult, config: Config): Response {
+  if (limit.reason === "unavailable") return storageFaultPage(config);
+  return messagePage({
+    title: "Daily limit reached - chainoftrust.dev",
+    heading: "That is enough fresh analyses for today",
+    message: `This address has run ${limit.limit} new analyses today, which is the limit. Reports that already exist stay free and unlimited, so anything analysed before is still available. The counter resets at midnight UTC.`,
+    contact: config.contact,
+    status: 429,
+  });
+}
+
+function storageFaultPage(config: Config): Response {
+  return messagePage({
+    title: "Try again shortly - chainoftrust.dev",
+    heading: "We could not start a fresh analysis",
+    message:
+      "The counter that tracks fresh analyses could not be read, so this submission was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay free and unlimited.",
+    contact: config.contact,
+    status: 503,
+  });
 }
 
 interface VerdictMatch {

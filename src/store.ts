@@ -218,6 +218,30 @@ export class Store {
   }
 
   /**
+   * How many submissions from this address failed to resolve to a commit today,
+   * or null when the counter cannot be read.
+   *
+   * Counted separately from the analysis slots. A submission that never
+   * resolves still spends an upstream fetch, so it needs a ceiling of its own,
+   * and a mistyped package name must not cost an honest visitor an analysis.
+   */
+  async resolutionFailures(ipHash: string): Promise<number | null> {
+    try {
+      const row = await this.db
+        .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
+        .bind(failureKey(ipHash), utcDay())
+        .first<{ count: number }>();
+      return typeof row?.count === "number" ? row.count : 0;
+    } catch {
+      return null;
+    }
+  }
+
+  async recordResolutionFailure(ipHash: string): Promise<void> {
+    await this.bump(failureKey(ipHash), utcDay());
+  }
+
+  /**
    * The report a verdict URL names.
    *
    * A commit can hold a bare repository report and one report per published
@@ -264,6 +288,10 @@ export class Store {
       .bind(month, Math.round(microCents))
       .run();
   }
+}
+
+function failureKey(ipHash: string): string {
+  return `resolve:${ipHash}`;
 }
 
 function hydrate(row: {
