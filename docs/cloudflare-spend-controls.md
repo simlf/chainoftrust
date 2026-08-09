@@ -71,8 +71,11 @@ guarantee.
 **3. Everything else that bounds volume.**
 
 - Cache by commit SHA: a repository submitted a thousand times costs one
-  analysis, and cache hits never reach the model or the rate limiter.
-- 5 fresh analyses per IP per UTC day.
+  analysis, and a cache hit never reaches the model.
+- 5 fresh analyses per IP per UTC day, charged only when an analysis really
+  runs. Reading an existing verdict at its own address is unlimited.
+- 100 submissions per IP per UTC day. Resolving a submission always reaches
+  GitHub or a registry, so that is what this counter bounds.
 - The egress allowlist in `src/lib/fetcher.ts` means a hostile repository
   cannot make the Worker fetch anything it did not choose to fetch.
 

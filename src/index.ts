@@ -1,7 +1,7 @@
 import { collect, resolveTarget, TargetNotFound } from "./collect";
 import { readConfig, type Config, type Env } from "./env";
 import { Fetcher } from "./lib/fetcher";
-import { InvalidTarget, parseTarget } from "./lib/target";
+import { decodeSegments, InvalidTarget, parseTarget } from "./lib/target";
 import { hashIp, Store, utcDay, type RateLimitResult } from "./store";
 import type { StoredVerdict } from "./types";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
@@ -158,7 +158,7 @@ async function handleAnalyse(
  * the error page of a product whose claim is verifiable facts.
  */
 function refusedPage(limit: RateLimitResult, config: Config): Response {
-  if (limit.reason === "unavailable") return storageFaultPage(config);
+  if (limit.reason === "unavailable") return storageFaultPage(config, "fresh analyses");
   return messagePage({
     title: "Daily limit reached - chainoftrust.dev",
     heading: "That is enough fresh analyses for today",
@@ -169,7 +169,7 @@ function refusedPage(limit: RateLimitResult, config: Config): Response {
 }
 
 function submissionsRefusedPage(limit: RateLimitResult, config: Config): Response {
-  if (limit.reason === "unavailable") return storageFaultPage(config);
+  if (limit.reason === "unavailable") return storageFaultPage(config, "submissions");
   return messagePage({
     title: "Too many submissions today - chainoftrust.dev",
     heading: "That is enough submissions from this address today",
@@ -179,12 +179,16 @@ function submissionsRefusedPage(limit: RateLimitResult, config: Config): Respons
   });
 }
 
-function storageFaultPage(config: Config): Response {
+/**
+ * Names the counter that actually refused, because two callers reach here and
+ * the page of a product whose standard is verifiable facts should not blame the
+ * counter that read fine.
+ */
+function storageFaultPage(config: Config, counter: "submissions" | "fresh analyses"): Response {
   return messagePage({
     title: "Try again shortly - chainoftrust.dev",
     heading: "We could not start a fresh analysis",
-    message:
-      "The counter that tracks submissions could not be read, so this one was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay readable at their own addresses.",
+    message: `The counter that tracks ${counter} could not be read, so this submission was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay readable at their own addresses.`,
     contact: config.contact,
     status: 503,
   });
@@ -197,7 +201,8 @@ interface VerdictMatch {
 }
 
 function matchVerdictPath(pathname: string): VerdictMatch | null {
-  const parts = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const parts = decodeSegments(pathname);
+  if (!parts) return null;
   // /r/github/:owner/:name[/:sha]  and the API alias
   const offset = parts[0] === "api" && parts[1] === "v1" && parts[2] === "verdict" ? 3 : 0;
   if (offset === 0 && parts[0] !== "r") return null;

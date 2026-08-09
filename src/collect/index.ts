@@ -40,8 +40,9 @@ export interface Resolved {
  * Pin the submission to a commit.
  *
  * Kept separate from collection so the cache can be consulted before any real
- * work happens. Two API calls buy us the SHA, and a hit means we never touch
- * the rest of the pipeline or the rate limiter.
+ * work happens. Two API calls buy us the SHA, and a hit means the rest of the
+ * pipeline never runs and no analysis slot is spent. The two calls themselves
+ * are upstream work, which is why a submission is charged for them either way.
  */
 export async function resolveTarget(f: Fetcher, input: ParsedInput): Promise<Resolved> {
   const resolved = await resolveRepository(f, input);
