@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Report } from "../src/types";
-import { estimateWorstCaseMicroCents, rateFor, writeUp } from "../src/verdict/writeup";
+import {
+  estimateInputMicroCents,
+  estimateWorstCaseMicroCents,
+  rateFor,
+  writeUp,
+} from "../src/verdict/writeup";
 
 const report: Report = {
   target: {
@@ -90,23 +95,53 @@ describe("the budget guard", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("charges the worst-case estimate when the call fails", async () => {
-    // A call can fail after tokens were consumed. Recording zero would let a
-    // sustained error rate walk straight past the monthly ceiling.
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("upstream is down");
-    }));
+  const failWith = (status: number, body = "{}") =>
+    vi.fn(async () =>
+      new Response(body, { status, headers: { "content-type": "application/json" } }),
+    );
 
-    const result = await writeUp(report, {
+  const attempt = () =>
+    writeUp(report, {
       apiKey: "test-key",
       model: "claude-haiku-4-5",
       budgetRemainingMicroCents: 1_000_000_000,
     });
 
-    expect(result.degradedReason).toBe("error");
-    expect(result.text).toBeNull();
-    expect(result.microCents).toBe(
+  it("charges the estimated input when a rate limit or a server error comes back", async () => {
+    // These can arrive after the prompt was read, so the ledger stays
+    // conservative. It charges input only: no output was produced.
+    const inputOnly = estimateInputMicroCents(report, rateFor("claude-haiku-4-5"));
+
+    vi.stubGlobal("fetch", failWith(429));
+    const throttled = await attempt();
+    expect(throttled).toMatchObject({ text: null, degradedReason: "error" });
+    expect(throttled.microCents).toBe(inputOnly);
+
+    vi.stubGlobal("fetch", failWith(503));
+    expect((await attempt()).microCents).toBe(inputOnly);
+
+    expect(inputOnly).toBeLessThan(
       estimateWorstCaseMicroCents(report, rateFor("claude-haiku-4-5")),
     );
-  }, 30_000);
+  }, 60_000);
+
+  it("charges nothing for a request the API rejected before inference", async () => {
+    // A revoked key used to charge the worst case on every analysis. The ledger
+    // never rolls back inside a month, so that locked the write-up off for the
+    // rest of it, long after the key was fixed.
+    for (const status of [400, 401, 403, 404]) {
+      vi.stubGlobal("fetch", failWith(status));
+      const result = await attempt();
+      expect(result.degradedReason, String(status)).toBe("error");
+      expect(result.microCents, String(status)).toBe(0);
+    }
+  }, 60_000);
+
+  it("charges nothing when the request never reached the API", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      throw new Error("connection refused");
+    }));
+
+    expect(await attempt()).toMatchObject({ microCents: 0, degradedReason: "error" });
+  }, 60_000);
 });

@@ -66,7 +66,7 @@ degraded mode: the deterministic verdict and all findings, no written summary.
 That is a supported mode, not an outage.
 
 ```bash
-npm test          # 92 tests, no network
+npm test          # the whole suite runs offline, no network
 npm run typecheck
 ```
 
