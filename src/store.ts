@@ -5,6 +5,12 @@ export interface RateLimitResult {
   allowed: boolean;
   used: number;
   limit: number;
+  /**
+   * Why a refusal happened. "quota" means the address really did spend its
+   * analyses. "unavailable" means the counter could not be read, which refuses
+   * in the same fail-closed direction but is not a fact about the visitor.
+   */
+  reason?: "quota" | "unavailable";
 }
 
 /**
@@ -122,7 +128,12 @@ export class Store {
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
     const day = utcDay();
-    const atLimit: RateLimitResult = { allowed: false, used: limit + 1, limit };
+    const atLimit: RateLimitResult = {
+      allowed: false,
+      used: limit + 1,
+      limit,
+      reason: "unavailable",
+    };
 
     const used = await this.bump(ipHash, day);
 
@@ -139,7 +150,9 @@ export class Store {
       // The prune is housekeeping. Failing it does not change the decision.
     }
 
-    return { allowed: used <= limit, used, limit };
+    return used <= limit
+      ? { allowed: true, used, limit }
+      : { allowed: false, used, limit, reason: "quota" };
   }
 
   /**

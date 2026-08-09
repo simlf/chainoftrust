@@ -119,6 +119,19 @@ async function handleAnalyse(
   // serialises concurrent submissions from one address.
   const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
   if (!limit.allowed) {
+    // A refusal the counter could not confirm is still a refusal, but saying
+    // the visitor spent a quota they may not have spent would be a false
+    // statement on the error page of a product whose claim is verifiable facts.
+    if (limit.reason === "unavailable") {
+      return messagePage({
+        title: "Try again shortly - chainoftrust.dev",
+        heading: "We could not start a fresh analysis",
+        message:
+          "The counter that tracks fresh analyses could not be read, so this submission was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay free and unlimited.",
+        contact: config.contact,
+        status: 503,
+      });
+    }
     return messagePage({
       title: "Daily limit reached - chainoftrust.dev",
       heading: "That is enough fresh analyses for today",

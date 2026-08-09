@@ -160,7 +160,14 @@ export function renderEvidence(report: Report, nonceOverride?: string): string {
 
   lines.push("FINDINGS");
   for (const f of report.findings) {
-    lines.push(`- [${f.severity}] (${f.check}) ${f.statement} [source: ${f.evidence}]`);
+    // A finding statement can quote the target: a prose probe embeds the
+    // sentence it matched, and a hook manifest finding embeds the command it
+    // read. Every target-derived substring is flattened here whatever collector
+    // produced it, so no verbatim repository text reaches the model outside the
+    // fenced block below.
+    lines.push(
+      `- [${f.severity}] (${f.check}) ${sanitise(f.statement)} [source: ${sanitise(f.evidence)}]`,
+    );
   }
   lines.push("");
 
@@ -192,6 +199,11 @@ function sanitise(text: string): string {
     .replace(/END-UNTRUSTED-\w+/gi, "[removed]")
     .replace(/UNTRUSTED-\w+/gi, "[removed]")
     .replace(/<\/?(system|instructions?|important)[^>]*>/gi, "[removed]")
+    // The section headers and role labels this envelope uses. A repository that
+    // reproduces one of them could otherwise appear to end the evidence and
+    // start speaking as the sender.
+    .replace(/\b(?:end\s+of\s+)?(?:findings|not\s+checked)\b/gi, "[removed]")
+    .replace(/\b(system|assistant|human|user)\s*:/gi, "[removed]")
     .replace(/\s+/g, " ")
     .trim();
 }

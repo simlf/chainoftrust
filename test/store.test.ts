@@ -184,17 +184,36 @@ describe("rate limiting", () => {
     expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false, used: 6 });
   });
 
-  it("refuses when the counter cannot be read at all", async () => {
+  it("refuses when the counter cannot be read at all, and says why", async () => {
     // Failing open here would disable the daily cap for every address at once.
+    // The reason is separate from quota exhaustion so the page does not tell a
+    // first-time visitor they spent analyses they never ran.
     const db = fakeDb({ returning: "none", counterReadable: false });
     const store = new Store(db as never);
 
-    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false });
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({
+      allowed: false,
+      reason: "unavailable",
+    });
   });
 
   it("refuses when the storage errors", async () => {
     const store = new Store(fakeDb({ broken: true }) as never);
-    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: false });
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({
+      allowed: false,
+      reason: "unavailable",
+    });
+  });
+
+  it("marks a genuine exhaustion as quota", async () => {
+    const store = new Store(fakeDb() as never);
+    for (let i = 0; i < 5; i++) await store.consumeRateLimit("ip", 5);
+
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({
+      allowed: false,
+      reason: "quota",
+      used: 6,
+    });
   });
 
   it("drops counters from days that have passed", async () => {

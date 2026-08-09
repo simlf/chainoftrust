@@ -100,6 +100,23 @@ export function isRepoIdentifier(owner: string, name: string): boolean {
   return !DOT_SEGMENT.test(owner) && !DOT_SEGMENT.test(name);
 }
 
+/**
+ * Is this ref safe to place in an api.github.com path?
+ *
+ * A slash inside a ref stays a path separator, because GitHub's commits
+ * endpoint rejects an encoded one, so the ref decides path shape and has to be
+ * checked for it. A dot segment is normalised away by the URL parser and would
+ * select a different endpoint on the allowlisted host, and git forbids ".."
+ * inside a ref name anyway, so nothing legitimate is refused here. An empty
+ * segment, a leading slash or a trailing slash change the shape the same way.
+ */
+export function isSafeRef(ref: string): boolean {
+  if (ref === "") return true;
+  if (!REF.test(ref)) return false;
+  if (ref.startsWith("/") || ref.endsWith("/")) return false;
+  return ref.split("/").every((segment) => segment !== "" && !DOT_SEGMENT.test(segment));
+}
+
 const DOT_SEGMENT = /^\.+$/;
 
 function githubTarget(owner: string, name: string, ref: string): ParsedInput {
@@ -109,7 +126,7 @@ function githubTarget(owner: string, name: string, ref: string): ParsedInput {
   if (!REPO.test(name) || DOT_SEGMENT.test(name)) {
     throw new InvalidTarget("That repository name is not valid.");
   }
-  if (!REF.test(ref)) throw new InvalidTarget("That ref is not valid.");
+  if (!isSafeRef(ref)) throw new InvalidTarget("That ref is not valid.");
   return { kind: "github", owner, name, ref };
 }
 

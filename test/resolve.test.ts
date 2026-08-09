@@ -82,6 +82,21 @@ describe("pinning a submission to a commit", () => {
     expect(resolved.target.requestedRef).toBe("main");
   });
 
+  it("never sends a ref that would walk the API path", async () => {
+    const f = fakeFetcher(repoRoute);
+
+    await expect(
+      resolveTarget(f as unknown as Fetcher, {
+        kind: "github",
+        owner: "o",
+        name: "r",
+        ref: "../../../../user",
+      }),
+    ).rejects.toBeInstanceOf(TargetNotFound);
+
+    expect(f.seen.filter((u) => u.includes("/commits/"))).toEqual([]);
+  });
+
   it("still refuses a ref that resolves at no depth", async () => {
     const f = fakeFetcher(repoRoute);
     await expect(

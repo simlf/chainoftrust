@@ -9,7 +9,7 @@ import {
 } from "../lib/github";
 import { fetchNpm, fetchPypi, fetchScorecard } from "../lib/registry";
 import type { ParsedInput } from "../lib/target";
-import { cacheKeyFor, isRepoIdentifier } from "../lib/target";
+import { cacheKeyFor, isRepoIdentifier, isSafeRef } from "../lib/target";
 import type { Evidence, Finding, NotChecked, TargetRef, TreeEntry } from "../types";
 import { analyseHookManifest, scanAgentConfig } from "./agent-config";
 import { analysePackageJson, analysePyproject } from "./manifest";
@@ -199,12 +199,14 @@ async function resolveRef(
   name: string,
   ref: string,
 ): Promise<{ sha: string; resolvedRef: string } | null> {
+  if (!isSafeRef(ref)) return null;
   const segments = ref.split("/").filter(Boolean);
   // Bounded so a deep path cannot turn one submission into a dozen API calls.
   const floor = Math.max(1, segments.length - 4);
   for (let take = segments.length; take >= floor; take--) {
     if (f.remaining <= 0) break;
     const candidate = segments.slice(0, take).join("/");
+    if (!isSafeRef(candidate)) continue;
     const sha = await resolveSha(f, owner, name, candidate);
     if (sha) return { sha, resolvedRef: candidate };
   }

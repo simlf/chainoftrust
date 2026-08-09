@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   InvalidTarget,
   cacheKeyFor,
+  isSafeRef,
   parseTarget,
   registryQualifier,
 } from "../src/lib/target";
@@ -95,6 +96,40 @@ describe("target parsing", () => {
   it("refuses an owner that would smuggle a path segment", () => {
     expect(() => parseTarget("own%2Fer/repo")).toThrow(InvalidTarget);
     expect(() => parseTarget("npm:../../etc/passwd")).toThrow(InvalidTarget);
+  });
+
+  it("refuses a ref that would walk the API path", () => {
+    // A ref keeps its slashes as path separators, because GitHub rejects an
+    // encoded one, so a dot segment inside it would select a different endpoint
+    // on the allowlisted host once the URL parser normalises the path.
+    const bad = [
+      "https://github.com/o/r/tree/..%2f..%2f..%2f..%2fuser",
+      "https://github.com/o/r/tree/main%2f..%2f..%2frate_limit",
+      "https://github.com/o/r/tree/.%2fmain",
+      "https://github.com/o/r/tree/main%2f%2fdocs",
+      "https://github.com/o/r/tree/main%2f",
+    ];
+    for (const input of bad) {
+      expect(() => parseTarget(input), input).toThrow(InvalidTarget);
+    }
+  });
+
+  it("judges a ref by whether it can change the API path shape", () => {
+    for (const ref of ["main", "release/1.x", "v0.32.6", "abc123", ""]) {
+      expect(isSafeRef(ref), ref).toBe(true);
+    }
+    for (const ref of ["..", ".", "../../user", "main/../rate_limit", "main//docs", "/main", "main/"]) {
+      expect(isSafeRef(ref), ref).toBe(false);
+    }
+  });
+
+  it("still accepts a branch name that legitimately contains a slash", () => {
+    expect(parseTarget("https://github.com/o/r/tree/release/1.x")).toMatchObject({
+      ref: "release/1.x",
+    });
+    expect(parseTarget("https://github.com/o/r/tree/main/docs")).toMatchObject({
+      ref: "main/docs",
+    });
   });
 
   it("refuses a dot segment that a URL parser would resolve away", () => {
