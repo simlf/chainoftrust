@@ -103,15 +103,14 @@ What this repository does instead:
   model call. On reaching it the service **degrades to a deterministic verdict
   without prose** rather than refusing service or spending more.
 - Cache by commit SHA. The same commit is never analysed twice, and a cache hit
-  costs nothing and never counts against a quota.
+  never costs an analysis. Reading an existing verdict at its own address costs
+  nothing at all: those URLs do no upstream work and are not rate limited.
 - 5 fresh analyses per IP per UTC day. An analysis that fails before a report is
-  stored is refunded, but only a bounded number of times a day, so the limit
-  bounds the work one address can drive and not just the reports it receives.
-- 10 submissions per IP per UTC day that resolve to no repository or package are
-  free, counted separately, so a mistyped name costs no analysis. Past that,
-  a submission spends one of the five analysis slots before it is resolved, so a
-  scripted replay of a name that does not exist runs out while an address that
-  still has slots can analyse something real.
+  stored gives its slot back.
+- 100 submissions per IP per UTC day. Every submission to the form resolves its
+  target at GitHub or a registry before anything else happens, so that is the
+  counter that bounds the upstream work one address can drive, whether or not
+  the report turns out to be cached. It is never given back.
 
 The default budget of 300 cents/month is deliberately below the draft's 30 EUR
 envelope. Raise the variable to spend more.

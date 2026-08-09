@@ -118,76 +118,101 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("submissions that resolve to nothing", () => {
-  it("are free up to the ceiling, then start costing analysis slots, then stop", async () => {
-    // Resolution runs before any slot is consumed, so without a bound a name
-    // that does not exist can be replayed indefinitely, each attempt still
-    // spending an upstream fetch.
-    const db = fakeDb();
-    const env = envWith(db);
-    stubGithub();
+const slotsOf = (db: ReturnType<typeof fakeDb>) =>
+  [...db.counters.entries()]
+    .filter(([key]) => !key.startsWith("resolve:"))
+    .map(([, count]) => count)
+    .reduce((a, b) => a + b, 0);
 
-    const statuses: number[] = [];
-    for (let i = 0; i < 20; i++) {
-      const res = await worker.fetch(submit(`nobody/repo-${i}`), env);
-      statuses.push(res.status);
-    }
+const submissionsOf = (db: ReturnType<typeof fakeDb>) =>
+  [...db.counters.entries()]
+    .filter(([key]) => key.startsWith("resolve:"))
+    .map(([, count]) => count)
+    .reduce((a, b) => a + b, 0);
 
-    // Ten free, then five that spend a slot each, then refusal.
-    expect(statuses.slice(0, 15)).toEqual(Array(15).fill(404));
-    expect(statuses.slice(15)).toEqual(Array(5).fill(429));
+const read = (path: string) => new Request(`https://chainoftrust.dev${path}`);
 
-    const upstream = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
-    expect(upstream, "a refused submission must not reach GitHub").toBe(15);
-  });
-
-  it("cost no analysis slot while they are under the ceiling", async () => {
-    const db = fakeDb();
-    const env = envWith(db);
-    stubGithub();
-
-    for (let i = 0; i < 10; i++) await worker.fetch(submit(`nobody/repo-${i}`), env);
-
-    const slots = [...db.counters.entries()].filter(([key]) => !key.startsWith("resolve:"));
-    expect(slots, "a mistyped name must not cost an analysis").toEqual([]);
-  });
-
-  it("leave a submission that does resolve working afterwards", async () => {
-    const db = fakeDb();
-    const env = envWith(db);
-    stubGithub();
-
-    for (let i = 0; i < 12; i++) await worker.fetch(submit(`nobody/repo-${i}`), env);
-
-    const res = await worker.fetch(submit("o/r"), env);
-    expect(res.status).toBe(303);
-    expect(res.headers.get("location")).toBe("/r/github/o/r/abc123");
-    expect(db.verdicts.size).toBe(1);
-  });
-
-  it("leave a cached report free even past the ceiling, however often it is asked for", async () => {
-    // The regression: past the ceiling a slot is reserved before resolution,
-    // and releasing that reservation used to run through the capped failure
-    // refund, so the sixth cache hit started costing a slot and the eleventh
-    // was refused. A cache hit reaches no upstream host, so it costs nothing.
+describe("what a submission costs", () => {
+  it("charges a cached report one submission and no analysis slot", async () => {
+    // Resolving reaches GitHub whether or not the report turns out to be
+    // cached, so the submission counter is charged and never given back. The
+    // analysis slot is not: no collection and no model call ran.
     const db = fakeDb();
     const env = envWith(db);
     stubGithub();
 
     await worker.fetch(submit("o/r"), env);
-    for (let i = 0; i < 12; i++) await worker.fetch(submit(`nobody/repo-${i}`), env);
-
-    const slotsOf = () =>
-      [...db.counters.entries()]
-        .filter(([key]) => !key.startsWith("resolve:") && !key.startsWith("refund:"))
-        .map(([, count]) => count);
-    const before = slotsOf();
+    const slotsAfterFirst = slotsOf(db);
+    const submissionsAfterFirst = submissionsOf(db);
 
     for (let i = 0; i < 20; i++) {
       const res = await worker.fetch(submit("o/r"), env);
       expect(res.status, `cache hit ${i}`).toBe(303);
     }
 
-    expect(slotsOf(), "a cache hit stays free").toEqual(before);
+    expect(slotsOf(db), "a cache hit costs no analysis").toBe(slotsAfterFirst);
+    expect(submissionsOf(db), "but it did reach GitHub").toBe(submissionsAfterFirst + 20);
+  });
+
+  it("charges a name that resolves to nothing one submission and no analysis slot", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub();
+
+    for (let i = 0; i < 12; i++) {
+      const res = await worker.fetch(submit(`nobody/repo-${i}`), env);
+      expect(res.status, `attempt ${i}`).toBe(404);
+    }
+
+    expect(slotsOf(db)).toBe(0);
+    expect(submissionsOf(db)).toBe(12);
+  });
+
+  it("still lets an ordinary visitor run five fresh analyses", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub();
+
+    for (let i = 0; i < 5; i++) {
+      db.verdicts.clear();
+      const res = await worker.fetch(submit("o/r"), env);
+      expect(res.status, `analysis ${i}`).toBe(303);
+    }
+
+    expect(slotsOf(db)).toBe(5);
+
+    db.verdicts.clear();
+    const sixth = await worker.fetch(submit("o/r"), env);
+    expect(sixth.status, "the sixth fresh analysis is the one that is refused").toBe(429);
+  });
+});
+
+describe("an address past the submission ceiling", () => {
+  it("is refused on the form but can still read reports that exist", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub();
+
+    await worker.fetch(submit("o/r"), env);
+    const upstreamAfterAnalysis = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    let refusals = 0;
+    for (let i = 0; i < 120; i++) {
+      const res = await worker.fetch(submit("o/r"), env);
+      if (res.status === 429) refusals++;
+    }
+    expect(refusals, "the ceiling has to bite for this to test anything").toBeGreaterThan(0);
+
+    const upstreamAfterReplay = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(
+      upstreamAfterReplay - upstreamAfterAnalysis,
+      "a refused submission reaches no upstream host",
+    ).toBeLessThan(120 * 2);
+
+    const page = await worker.fetch(read("/r/github/o/r/abc123"), env);
+    expect(page.status, "reading an existing verdict is not rate limited").toBe(200);
+
+    const json = await worker.fetch(read("/r/github/o/r/abc123?format=json"), env);
+    expect(json.status).toBe(200);
   });
 });
