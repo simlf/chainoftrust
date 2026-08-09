@@ -1,4 +1,5 @@
 import type { Fetcher } from "./fetcher";
+import { isRepoIdentifier, isSafeRef } from "./target";
 import type { ReleaseInfo, RepoMeta, TreeEntry } from "../types";
 
 const API = "https://api.github.com";
@@ -61,6 +62,7 @@ export async function resolveSha(
   name: string,
   ref: string,
 ): Promise<string | null> {
+  if (!isRepoIdentifier(owner, name) || !isSafeRef(ref) || ref === "") return null;
   const r = await f.json<{ sha: string }>(
     `${API}/repos/${owner}/${name}/commits/${encodeRef(ref)}`,
   );
