@@ -97,6 +97,7 @@ function finding(f: Report["findings"][number]): string {
   return `<div class="finding">
 <span class="sev ${esc(f.severity)}">${esc(f.severity)} &middot; ${esc(f.check)}</span>
 <p>${esc(f.statement)}</p>
+${f.quote ? `<blockquote>${esc(f.quote)}</blockquote>` : ""}
 <p class="cite">${esc(f.evidence)}</p>
 </div>`;
 }

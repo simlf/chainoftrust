@@ -216,6 +216,29 @@ describe("rate limiting", () => {
     });
   });
 
+  it("counts submissions that never resolved without touching the analysis slots", async () => {
+    // A submission that resolves to nothing still spends an upstream fetch, so
+    // it is bounded, but on its own counter: a mistyped package name must not
+    // cost an honest visitor one of their five analyses.
+    const db = fakeDb();
+    const store = new Store(db as never);
+
+    for (let i = 0; i < 12; i++) await store.recordResolutionFailure("ip");
+
+    expect(await store.resolutionFailures("ip")).toBe(12);
+    expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: true, used: 1 });
+  });
+
+  it("reports no failures for an address that has not had any", async () => {
+    const store = new Store(fakeDb() as never);
+    expect(await store.resolutionFailures("ip")).toBe(0);
+  });
+
+  it("reports the failure counter as unreadable when storage errors", async () => {
+    const store = new Store(fakeDb({ broken: true }) as never);
+    expect(await store.resolutionFailures("ip")).toBeNull();
+  });
+
   it("drops counters from days that have passed", async () => {
     const db = fakeDb();
     const store = new Store(db as never);

@@ -30,6 +30,16 @@ export interface Finding {
   concern?: string;
   /** The fact, stated so that a reader can disprove it. */
   statement: string;
+  /**
+   * Verbatim text from the target that the finding is about.
+   *
+   * Kept out of the statement on purpose. A statement is ours and travels in
+   * the trusted part of the write-up prompt, so target bytes inside one would
+   * be repository text speaking where the model is told the sender speaks. The
+   * quote reaches the model only inside the nonce-fenced untrusted block, and
+   * reaches the reader escaped on the verdict page.
+   */
+  quote?: string;
   /** Where the fact came from: a path, a path with a line, or an API field. */
   evidence: string;
   /**

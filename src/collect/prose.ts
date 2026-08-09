@@ -137,9 +137,10 @@ export function scanProse(files: { path: string; text: string }[]): ProseScan {
             check: "prose",
             severity: probe.severity,
             concern: `prose:${probe.reason}`,
-            statement: `${capitalise(probe.reason)}: "${text}"`,
+            statement: `${capitalise(probe.reason)}. The sentence it says that in is quoted verbatim, from ${file.path}.`,
             evidence: file.path,
             method: "prose",
+            quote: text,
           });
         }
         break;

@@ -107,6 +107,11 @@ What this repository does instead:
 - 5 fresh analyses per IP per UTC day. An analysis that fails before a report is
   stored is refunded, but only a bounded number of times a day, so the limit
   bounds the work one address can drive and not just the reports it receives.
+- 10 submissions per IP per UTC day that resolve to no repository or package are
+  free, counted separately, so a mistyped name costs no analysis. Past that,
+  a submission spends one of the five analysis slots before it is resolved, so a
+  scripted replay of a name that does not exist runs out while an address that
+  still has slots can analyse something real.
 
 The default budget of 300 cents/month is deliberately below the draft's 30 EUR
 envelope. Raise the variable to spend more.
