@@ -12,15 +12,21 @@ import type { Finding } from "../types";
 const LIFECYCLE = ["preinstall", "install", "postinstall", "prepare"] as const;
 
 export function analysePackageJson(path: string, source: string): Finding[] {
-  let pkg: {
-    scripts?: Record<string, string>;
-    bin?: Record<string, string> | string;
-  };
+  // Target content is untrusted input, and a manifest holding the four bytes
+  // null parses without throwing. Nothing a repository ships may decide the
+  // response code, so anything that is not an object yields no findings.
+  let parsed: unknown;
   try {
-    pkg = JSON.parse(source);
+    parsed = JSON.parse(source);
   } catch {
     return [];
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return [];
+
+  const pkg = parsed as {
+    scripts?: Record<string, string>;
+    bin?: Record<string, string> | string;
+  };
 
   const findings: Finding[] = [];
   const scripts = pkg.scripts ?? {};

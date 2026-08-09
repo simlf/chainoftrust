@@ -119,15 +119,19 @@ export async function writeUp(
       return { text: null, model: null, microCents, degradedReason: "error" };
     }
     return { text: stripEmDashes(text), model: opts.model, microCents, degradedReason: null };
-  } catch {
+  } catch (err) {
     // A model outage must not take the service down. The deterministic verdict
     // is the product; the prose is the finish on it.
     //
-    // The failure is still charged at the worst-case estimate. A call can fail
-    // after tokens were consumed, on an SDK retry or on a response that arrives
-    // and then does not parse, and recording zero would let a sustained error
-    // rate walk straight past the monthly ceiling.
-    return { text: null, model: null, microCents: worstCase, degradedReason: "error" };
+    // Only a failure that plausibly reached inference is charged, and only for
+    // the input it would have read, since no output was produced. A rejected
+    // request burns no tokens, and the monthly ledger never rolls back inside a
+    // month, so charging for a mistyped key would degrade every later report
+    // for the rest of the month.
+    const microCents = couldHaveConsumedTokens(err)
+      ? estimateInputMicroCents(report, rate)
+      : 0;
+    return { text: null, model: null, microCents, degradedReason: "error" };
   }
 }
 
@@ -196,12 +200,34 @@ function stripEmDashes(text: string): string {
   return text.replace(/\s*[—–]\s*/g, ", ");
 }
 
-export function estimateWorstCaseMicroCents(report: Report, rate: TokenRate): number {
+function estimateInputTokens(report: Report): number {
   const chars =
     SYSTEM.length +
     report.findings.reduce((n, f) => n + f.statement.length + f.evidence.length, 0) +
     report.notChecked.join("").length +
     report.proseExcerpts.reduce((n, e) => n + e.text.length, 0);
-  const inputTokens = Math.ceil(chars / 4) + 200;
-  return inputTokens * rate.input + MAX_OUTPUT_TOKENS * rate.output;
+  return Math.ceil(chars / 4) + 200;
+}
+
+export function estimateInputMicroCents(report: Report, rate: TokenRate): number {
+  return estimateInputTokens(report) * rate.input;
+}
+
+export function estimateWorstCaseMicroCents(report: Report, rate: TokenRate): number {
+  return estimateInputTokens(report) * rate.input + MAX_OUTPUT_TOKENS * rate.output;
+}
+
+/**
+ * Did this failure plausibly reach inference?
+ *
+ * A rate limit or a server error can arrive after the prompt was read, and so
+ * can a response that fails to parse. A 4xx rejection, a connection that never
+ * opened and anything with no status at all did not, and the ledger is better
+ * off under-counting those than locking the write-up off for a whole month.
+ */
+function couldHaveConsumedTokens(err: unknown): boolean {
+  if (err instanceof Anthropic.APIConnectionError) return false;
+  const status = (err as { status?: unknown })?.status;
+  if (typeof status !== "number") return false;
+  return status === 429 || status >= 500;
 }

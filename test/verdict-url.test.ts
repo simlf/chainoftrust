@@ -40,7 +40,7 @@ describe("a report's own address", () => {
     expect(url.pathname).toBe("/r/github/astral-sh/uv/abc123");
 
     const qualifier = registryQualifier(url.searchParams.get("pkg") ?? "");
-    expect(qualifier).toEqual({ kind: "pypi", packageName: "uv" });
+    expect(qualifier).toEqual({ kind: "pypi", packageName: "uv", version: "0.9.0" });
     expect(cacheKeyFor("astral-sh", "uv", "abc123", qualifier!)).toBe(
       cacheKeyFor("astral-sh", "uv", "abc123", registry),
     );
@@ -53,6 +53,6 @@ describe("a report's own address", () => {
     );
     const params = new URL(`https://chainoftrust.dev${withPkg}`).searchParams;
     expect(params.get("format")).toBe("json");
-    expect(params.get("pkg")).toBe("npm:@playwright/mcp");
+    expect(params.get("pkg")).toBe("npm:@playwright/mcp@1.0.0");
   });
 });

@@ -36,6 +36,22 @@ describe("package manifest", () => {
     expect(analysePackageJson("package.json", "{ not json")).toEqual([]);
   });
 
+  it("says nothing about a manifest that parses to something other than an object", () => {
+    // A repository whose package.json holds the four bytes null used to throw a
+    // TypeError out of the collector and render the 500 page. Target content is
+    // untrusted input and must never choose the response.
+    for (const source of ["null", '"text"', "42", "[]", "true"]) {
+      expect(() => analysePackageJson("package.json", source), source).not.toThrow();
+      expect(analysePackageJson("package.json", source), source).toEqual([]);
+    }
+  });
+
+  it("tolerates a manifest whose fields are the wrong shape", () => {
+    expect(() =>
+      analysePackageJson("package.json", JSON.stringify({ scripts: "nope", bin: 7 })),
+    ).not.toThrow();
+  });
+
   it("reports the Python build backend that a pip install would run", () => {
     const findings = analysePyproject(
       "pyproject.toml",

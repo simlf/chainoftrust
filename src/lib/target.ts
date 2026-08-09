@@ -101,6 +101,14 @@ function packageTarget(kind: "npm" | "pypi", rawName: string): ParsedInput {
   return { kind, owner: "", name, ref: "" };
 }
 
+export interface RegistryKey {
+  kind: "npm" | "pypi";
+  packageName: string;
+  version?: string;
+}
+
+const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_-]{0,64}$/;
+
 /**
  * Canonical, URL-safe identity used as the D1 primary key.
  *
@@ -108,24 +116,38 @@ function packageTarget(kind: "npm" | "pypi", rawName: string): ParsedInput {
  * submission at the same commit: only the former runs the registry-provenance
  * check. They therefore occupy distinct rows, or the first one analysed would
  * silently be served for the other with a check missing and nothing saying so.
+ *
+ * The published version is part of that identity too. A registry submission is
+ * pinned to the repository's default-branch commit, not to the version's tag,
+ * so two releases can share a commit. Without the version, a republish would be
+ * answered with the previous release's provenance under the new version's name.
  */
 export function cacheKeyFor(
   owner: string,
   name: string,
   sha: string,
-  registry?: { kind: "npm" | "pypi"; packageName: string },
+  registry?: RegistryKey,
 ): string {
   const base = `github:${owner.toLowerCase()}/${name.toLowerCase()}@${sha}`;
-  return registry ? `${base}#${registry.kind}:${registry.packageName.toLowerCase()}` : base;
+  if (!registry) return base;
+  const version = registry.version ? `@${registry.version.toLowerCase()}` : "";
+  return `${base}#${registry.kind}:${registry.packageName.toLowerCase()}${version}`;
 }
 
-/** The `#npm:pkg` suffix of a cache key, as carried in a verdict URL. */
-export function registryQualifier(raw: string): { kind: "npm" | "pypi"; packageName: string } | null {
+/** The `npm:pkg@version` qualifier a verdict URL carries. */
+export function registryQualifier(raw: string): RegistryKey | null {
   const m = /^(npm|pypi):(.+)$/i.exec(raw.trim());
   if (!m) return null;
   const kind = m[1]!.toLowerCase() as "npm" | "pypi";
-  const name = m[2]!;
+
+  const rest = m[2]!;
+  const at = rest.lastIndexOf("@");
+  const hasVersion = at > 0 && VERSION.test(rest.slice(at + 1));
+  const name = hasVersion ? rest.slice(0, at) : rest;
+
   const pattern = kind === "npm" ? NPM_NAME : PYPI_NAME;
   if (!pattern.test(name.toLowerCase())) return null;
-  return { kind, packageName: name };
+  return hasVersion
+    ? { kind, packageName: name, version: rest.slice(at + 1) }
+    : { kind, packageName: name };
 }

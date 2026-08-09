@@ -125,6 +125,23 @@ describe("cache identity", () => {
       cacheKeyFor("o", "r", "s", { kind: "npm", packageName: "uv" }),
     );
   });
+
+  it("separates two published versions that resolve to the same commit", () => {
+    // A registry submission is pinned to the default-branch commit, not to the
+    // version's tag, so a republish would otherwise be answered with the
+    // previous release's provenance under the new version's name.
+    const first = cacheKeyFor("o", "r", "abc", {
+      kind: "npm",
+      packageName: "uv",
+      version: "1.0.0",
+    });
+    const second = cacheKeyFor("o", "r", "abc", {
+      kind: "npm",
+      packageName: "uv",
+      version: "1.0.1",
+    });
+    expect(first).not.toBe(second);
+  });
 });
 
 describe("registry qualifier carried in a verdict URL", () => {
@@ -137,6 +154,30 @@ describe("registry qualifier carried in a verdict URL", () => {
       kind: "pypi",
       packageName: "aider-chat",
     });
+  });
+
+  it("reads the version off a scoped and an unscoped name", () => {
+    expect(registryQualifier("npm:@playwright/mcp@0.0.41")).toEqual({
+      kind: "npm",
+      packageName: "@playwright/mcp",
+      version: "0.0.41",
+    });
+    expect(registryQualifier("pypi:aider-chat@0.86.1")).toEqual({
+      kind: "pypi",
+      packageName: "aider-chat",
+      version: "0.86.1",
+    });
+  });
+
+  it("builds the same cache key the analysis filed the report under", () => {
+    const parsed = registryQualifier("npm:@playwright/mcp@0.0.41")!;
+    expect(cacheKeyFor("microsoft", "playwright-mcp", "sha", parsed)).toBe(
+      cacheKeyFor("microsoft", "playwright-mcp", "sha", {
+        kind: "npm",
+        packageName: "@playwright/mcp",
+        version: "0.0.41",
+      }),
+    );
   });
 
   it("refuses anything that is not a package name", () => {

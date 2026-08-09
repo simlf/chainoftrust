@@ -1,3 +1,4 @@
+import { cacheKeyFor, registryQualifier } from "./lib/target";
 import type { Report, StoredVerdict } from "./types";
 
 export interface RateLimitResult {
@@ -111,46 +112,74 @@ export class Store {
   }
 
   /**
-   * Is there a slot left today? Read only, so a submission that never produces
-   * a report costs nothing. Nothing is written until consumeRateLimit runs.
-   */
-  async checkRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
-    const day = utcDay();
-    const row = await this.db
-      .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
-      .bind(ipHash, day)
-      .first<{ count: number }>();
-    const used = row?.count ?? 0;
-    return { allowed: used < limit, used, limit };
-  }
-
-  /**
-   * Consume one fresh-analysis slot. Called only once a report has been stored,
-   * so a transient GitHub or model failure does not spend someone's quota on an
-   * analysis that produced nothing. A cache hit never reaches this.
+   * Consume one fresh-analysis slot, before the work starts.
+   *
+   * The increment and the comparison have to be one statement. Reading the
+   * count first and writing it afterwards lets ten concurrent submissions from
+   * one address all read zero and all run, so the daily limit would only hold
+   * for strictly sequential requests. A submission that then fails is refunded.
+   * A cache hit never reaches this.
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
     const day = utcDay();
 
-    await this.db
+    // RETURNING makes the increment and the count one round trip. Reading the
+    // count back in a second statement would let concurrent submissions see the
+    // same value and all decide they were within the limit.
+    const row = await this.db
       .prepare(
         `INSERT INTO rate_limits (ip_hash, day, count) VALUES (?, ?, 1)
-         ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1`,
+         ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1
+         RETURNING count`,
       )
       .bind(ipHash, day)
-      .run();
+      .first<{ count: number }>();
 
     // Yesterday's counters answer no question anyone can ask, and nothing else
     // ever deletes them, so the table would grow for the life of the deployment.
     await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
 
-    const row = await this.db
-      .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
-      .bind(ipHash, day)
-      .first<{ count: number }>();
-
     const used = row?.count ?? 1;
     return { allowed: used <= limit, used, limit };
+  }
+
+  /**
+   * Give back a slot consumed by an analysis that produced nothing. The limit
+   * counts analyses that produced a report, so a transient GitHub or model
+   * failure must not cost a submitter one of their five.
+   */
+  async refundRateLimit(ipHash: string): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE rate_limits SET count = count - 1
+          WHERE ip_hash = ? AND day = ? AND count > 0`,
+      )
+      .bind(ipHash, utcDay())
+      .run();
+  }
+
+  /**
+   * The report a verdict URL names.
+   *
+   * A commit can hold a bare repository report and one report per published
+   * package. `pkg` names which, as `npm:name@version`. A qualifier that names
+   * no stored row resolves to nothing rather than to the bare repository
+   * report: answering a narrower question with a wider analysis is the silent
+   * scope drop the registry cache key exists to prevent.
+   */
+  async getVerdictForQuery(
+    owner: string,
+    name: string,
+    sha: string,
+    pkg: string | null,
+  ): Promise<StoredVerdict | null> {
+    if (pkg) {
+      const registry = registryQualifier(pkg);
+      if (!registry) return null;
+      return this.getVerdict(cacheKeyFor(owner, name, sha, registry));
+    }
+    const plain = await this.getVerdict(cacheKeyFor(owner, name, sha));
+    return plain ?? (await this.getVerdictAtCommit(owner, name, sha));
   }
 
   async budgetRemainingMicroCents(ceilingCents: number): Promise<number> {

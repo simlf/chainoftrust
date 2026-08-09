@@ -109,7 +109,7 @@ export function verdictPath(r: Report): string {
   const path = `/r/github/${encodeURIComponent(r.target.owner)}/${encodeURIComponent(r.target.name)}/${encodeURIComponent(r.target.sha)}`;
   const reg = r.target.registry;
   return reg
-    ? `${path}?pkg=${encodeURIComponent(`${reg.kind}:${reg.packageName}`)}`
+    ? `${path}?pkg=${encodeURIComponent(`${reg.kind}:${reg.packageName}@${reg.version}`)}`
     : path;
 }
 
