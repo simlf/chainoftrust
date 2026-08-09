@@ -84,7 +84,8 @@ npm run deploy
 ```
 
 `.github/workflows/deploy.yml` does the same on a push to `main`, given a
-`CLOUDFLARE_API_TOKEN` repository secret.
+`CLOUDFLARE_API_TOKEN` repository secret, plus `CLOUDFLARE_ACCOUNT_ID` if the
+token can see more than one account.
 
 ### Cost controls
 
