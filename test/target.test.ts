@@ -132,6 +132,19 @@ describe("target parsing", () => {
     });
   });
 
+  it("refuses a malformed percent escape rather than failing on it", () => {
+    // decodeURIComponent throws on a bad escape. What a visitor pasted must not
+    // be able to choose the response code, so this is an invalid target and not
+    // a fault on our side.
+    for (const bad of [
+      "https://github.com/o/%E0%A4%A",
+      "https://github.com/%/repo",
+      "https://pypi.org/project/%ZZ",
+    ]) {
+      expect(() => parseTarget(bad), bad).toThrow(InvalidTarget);
+    }
+  });
+
   it("refuses a dot segment that a URL parser would resolve away", () => {
     // repos/owner/.. normalises to a different endpoint on the same host.
     for (const bad of [

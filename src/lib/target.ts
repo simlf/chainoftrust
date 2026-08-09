@@ -14,6 +14,21 @@ const NPM_NAME = /^(?:@[a-z0-9][a-z0-9._-]{0,100}\/)?[a-z0-9][a-z0-9._-]{0,100}$
 const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,100})$/;
 
 /**
+ * Split a path into decoded segments, or null when an escape is malformed.
+ *
+ * decodeURIComponent throws on a bad escape, and what a visitor pasted must not
+ * be able to choose the response code: a broken URL is a broken URL, not a
+ * fault on our side.
+ */
+export function decodeSegments(pathname: string): string[] | null {
+  try {
+    return pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Turn whatever a human pasted into a target we are willing to fetch.
  *
  * Deliberately strict. Anything not matched here is refused rather than
@@ -50,7 +65,8 @@ export function parseTarget(raw: string): ParsedInput {
   }
 
   const host = url.hostname.toLowerCase().replace(/^www\./, "");
-  const segments = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  const segments = decodeSegments(url.pathname);
+  if (!segments) throw new InvalidTarget("That does not look like a URL.");
 
   if (host === "github.com") {
     if (segments.length < 2) {

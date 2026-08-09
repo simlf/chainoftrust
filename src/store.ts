@@ -16,10 +16,16 @@ export interface RateLimitResult {
 /**
  * D1 is the cache, the rate limiter and the budget ledger.
  *
- * Cache identity is the commit SHA. A popular repository submitted a thousand
- * times costs one analysis, and a cache hit is free, unlimited and never counts
- * against anyone's quota, because punishing cache hits would discourage the
- * exact behaviour the product wants.
+ * Cache identity is the commit SHA, so a popular repository submitted a
+ * thousand times costs one analysis. What each counter charges for:
+ *
+ *  - Reading an existing verdict at its own address costs nothing at all and is
+ *    unlimited. Those requests do no upstream work.
+ *  - Submitting through the form always costs one submission, because it has to
+ *    reach GitHub or a registry to learn the commit SHA before it can know
+ *    whether a report already exists.
+ *  - A fresh analysis additionally costs one of the five daily analysis slots.
+ *    A cache hit never costs one of those.
  */
 export class Store {
   constructor(private readonly db: D1Database) {}
@@ -135,7 +141,7 @@ export class Store {
    * Consume one fresh-analysis slot, once a cache miss means real work.
    *
    * Given back only when that work failed, by releaseRateLimit. A cache hit
-   * never reaches this, which is what keeps a cached report free.
+   * never reaches this, so a cached report never costs an analysis.
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
     return this.consumeCounter(ipHash, limit);

@@ -187,6 +187,19 @@ describe("what a submission costs", () => {
   });
 });
 
+describe("a pasted URL a decoder cannot read", () => {
+  it("is answered as an invalid target, not as a fault on our side", async () => {
+    const env = envWith(fakeDb());
+    stubGithub();
+
+    const res = await worker.fetch(submit("https://github.com/o/%E0%A4%A"), env);
+    expect(res.status, "the visitor pasted something broken, we did not break").toBe(400);
+
+    const page = await worker.fetch(read("/r/github/o/%E0%A4%A"), env);
+    expect(page.status).toBe(404);
+  });
+});
+
 describe("an address past the submission ceiling", () => {
   it("is refused on the form but can still read reports that exist", async () => {
     const db = fakeDb();
