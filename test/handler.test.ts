@@ -165,23 +165,29 @@ describe("submissions that resolve to nothing", () => {
     expect(db.verdicts.size).toBe(1);
   });
 
-  it("leave a cached report free even past the ceiling", async () => {
+  it("leave a cached report free even past the ceiling, however often it is asked for", async () => {
+    // The regression: past the ceiling a slot is reserved before resolution,
+    // and releasing that reservation used to run through the capped failure
+    // refund, so the sixth cache hit started costing a slot and the eleventh
+    // was refused. A cache hit reaches no upstream host, so it costs nothing.
     const db = fakeDb();
     const env = envWith(db);
     stubGithub();
 
     await worker.fetch(submit("o/r"), env);
     for (let i = 0; i < 12; i++) await worker.fetch(submit(`nobody/repo-${i}`), env);
-    const spentBefore = db.counters.get(
-      [...db.counters.keys()].find((k) => !k.startsWith("resolve:"))!,
-    );
 
-    const res = await worker.fetch(submit("o/r"), env);
-    expect(res.status).toBe(303);
+    const slotsOf = () =>
+      [...db.counters.entries()]
+        .filter(([key]) => !key.startsWith("resolve:") && !key.startsWith("refund:"))
+        .map(([, count]) => count);
+    const before = slotsOf();
 
-    const spentAfter = db.counters.get(
-      [...db.counters.keys()].find((k) => !k.startsWith("resolve:"))!,
-    );
-    expect(spentAfter, "a cache hit stays free").toBe(spentBefore);
+    for (let i = 0; i < 20; i++) {
+      const res = await worker.fetch(submit("o/r"), env);
+      expect(res.status, `cache hit ${i}`).toBe(303);
+    }
+
+    expect(slotsOf(), "a cache hit stays free").toEqual(before);
   });
 });

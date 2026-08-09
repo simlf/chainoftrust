@@ -187,6 +187,29 @@ export class Store {
   }
 
   /**
+   * Give back a slot that was reserved for upstream work never done.
+   *
+   * Distinct from a refund: a refund forgives work that ran and failed, and is
+   * capped so a target that always fails cannot be replayed for free. A release
+   * cancels a reservation, so it is not capped. Charging one would make a cache
+   * hit cost a slot, and a cache hit reaches no upstream host at all.
+   */
+  async releaseRateLimit(ipHash: string): Promise<void> {
+    try {
+      await this.db
+        .prepare(
+          `UPDATE rate_limits SET count = count - 1
+            WHERE ip_hash = ? AND day = ? AND count > 0`,
+        )
+        .bind(ipHash, utcDay())
+        .run();
+    } catch {
+      // A counter that cannot be decremented leaves the slot spent, which is
+      // the safe direction for a limiter.
+    }
+  }
+
+  /**
    * Increment one daily counter and read it back in the same statement.
    *
    * RETURNING keeps the increment and the count one round trip, which is what
