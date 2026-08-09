@@ -130,48 +130,20 @@ describe("rate limiting", () => {
     const store = new Store(db as never);
 
     await store.consumeRateLimit("ip", 5);
-    expect(await store.refundRateLimit("ip", 5)).toBe(true);
+    await store.releaseRateLimit("ip");
 
     expect(db.counters.get(`ip|${today}`)).toBe(0);
     expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ used: 1, allowed: true });
   });
 
-  it("stops refunding a submission that keeps failing", async () => {
-    // An unbounded refund makes a target that fails every time free to replay,
-    // and every replay still drives a full collection against GitHub.
+  it("never releases below zero", async () => {
     const db = fakeDb();
     const store = new Store(db as never);
 
-    const attempts: boolean[] = [];
-    for (let i = 0; i < 12; i++) {
-      const consumed = await store.consumeRateLimit("ip", 5);
-      if (!consumed.allowed) {
-        attempts.push(false);
-        continue;
-      }
-      attempts.push(await store.refundRateLimit("ip", 5));
-    }
-
-    expect(attempts.filter(Boolean)).toHaveLength(5);
-    expect(attempts.at(-1)).toBe(false);
-    expect((await store.consumeRateLimit("ip", 5)).allowed).toBe(false);
-  });
-
-  it("never refunds below zero", async () => {
-    const db = fakeDb();
-    const store = new Store(db as never);
-
-    await store.refundRateLimit("ip", 5);
-    await store.refundRateLimit("ip", 5);
+    await store.releaseRateLimit("ip");
+    await store.releaseRateLimit("ip");
 
     expect(db.counters.get(`ip|${today}`) ?? 0).toBe(0);
-  });
-
-  it("does not refund when the refund counter cannot be read", async () => {
-    const db = fakeDb({ returning: "none", counterReadable: false });
-    const store = new Store(db as never);
-
-    expect(await store.refundRateLimit("ip", 5)).toBe(false);
   });
 
   it("still counts when the driver returns no row for a write statement", async () => {
@@ -216,27 +188,37 @@ describe("rate limiting", () => {
     });
   });
 
-  it("counts submissions that never resolved without touching the analysis slots", async () => {
-    // A submission that resolves to nothing still spends an upstream fetch, so
-    // it is bounded, but on its own counter: a mistyped package name must not
-    // cost an honest visitor one of their five analyses.
+  it("counts submissions on their own counter, apart from the analysis slots", async () => {
+    // Resolving always reaches upstream, so every submission is charged for it,
+    // but on a counter of its own: looking something up must not cost one of
+    // the five analyses.
     const db = fakeDb();
     const store = new Store(db as never);
 
-    for (let i = 0; i < 12; i++) await store.recordResolutionFailure("ip");
+    for (let i = 0; i < 12; i++) {
+      expect((await store.consumeSubmission("ip", 100)).allowed, `submission ${i}`).toBe(true);
+    }
 
-    expect(await store.resolutionFailures("ip")).toBe(12);
+    expect(db.counters.get(`ip|${today}`) ?? 0, "no analysis slot was spent").toBe(0);
     expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ allowed: true, used: 1 });
   });
 
-  it("reports no failures for an address that has not had any", async () => {
+  it("refuses once the day's submissions are spent", async () => {
     const store = new Store(fakeDb() as never);
-    expect(await store.resolutionFailures("ip")).toBe(0);
+    for (let i = 0; i < 100; i++) await store.consumeSubmission("ip", 100);
+
+    expect(await store.consumeSubmission("ip", 100)).toMatchObject({
+      allowed: false,
+      reason: "quota",
+    });
   });
 
-  it("reports the failure counter as unreadable when storage errors", async () => {
+  it("refuses a submission when the counter cannot be read", async () => {
     const store = new Store(fakeDb({ broken: true }) as never);
-    expect(await store.resolutionFailures("ip")).toBeNull();
+    expect(await store.consumeSubmission("ip", 100)).toMatchObject({
+      allowed: false,
+      reason: "unavailable",
+    });
   });
 
   it("drops counters from days that have passed", async () => {

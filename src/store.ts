@@ -118,15 +118,36 @@ export class Store {
   }
 
   /**
-   * Consume one fresh-analysis slot, before the work starts.
+   * Consume one submission, which is what pays for resolving a target.
    *
-   * The increment and the comparison have to be one statement. Reading the
-   * count first and writing it afterwards lets ten concurrent submissions from
-   * one address all read zero and all run, so the daily limit would only hold
-   * for strictly sequential requests. A submission that then fails is refunded.
-   * A cache hit never reaches this.
+   * Every POST to /analyse resolves before anything else can be decided, and
+   * resolving always reaches upstream: the repository and the commit, plus a
+   * registry document for an npm or PyPI target. Those requests are really
+   * spent, so this counter is never given back, not even when the analysis
+   * turns out to be cached. Its ceiling is generous: it exists to stop a
+   * scripted replay, not to ration a person looking things up.
+   */
+  async consumeSubmission(ipHash: string, limit: number): Promise<RateLimitResult> {
+    return this.consumeCounter(`resolve:${ipHash}`, limit);
+  }
+
+  /**
+   * Consume one fresh-analysis slot, once a cache miss means real work.
+   *
+   * Given back only when that work failed, by releaseRateLimit. A cache hit
+   * never reaches this, which is what keeps a cached report free.
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
+    return this.consumeCounter(ipHash, limit);
+  }
+
+  /**
+   * The increment and the comparison have to be one statement. Reading the
+   * count first and writing it afterwards lets ten concurrent submissions from
+   * one address all read zero and all run, so a daily limit would only hold for
+   * strictly sequential requests.
+   */
+  private async consumeCounter(key: string, limit: number): Promise<RateLimitResult> {
     const day = utcDay();
     const atLimit: RateLimitResult = {
       allowed: false,
@@ -135,7 +156,7 @@ export class Store {
       reason: "unavailable",
     };
 
-    const used = await this.bump(ipHash, day);
+    const used = await this.bump(key, day);
 
     // A counter nobody can read is treated as spent. A storage fault that made
     // the limiter answer "not yet at the limit" would disable the daily cap for
@@ -156,43 +177,11 @@ export class Store {
   }
 
   /**
-   * Give back a slot consumed by an analysis that produced nothing, up to
-   * maxPerDay times.
+   * Give back an analysis slot spent on work that produced no report.
    *
-   * A transient GitHub or model failure must not cost a submitter one of their
-   * five. An unbounded refund would make a target that fails every time free to
-   * replay, and each replay still drives a full collection, so the daily limit
-   * would bound successful analyses rather than work. Refunds are counted in
-   * the same table under their own key, so no schema changes with this.
-   *
-   * Returns whether the slot was actually given back.
-   */
-  async refundRateLimit(ipHash: string, maxPerDay: number): Promise<boolean> {
-    const day = utcDay();
-    const refunds = await this.bump(`refund:${ipHash}`, day);
-    if (refunds === null || refunds > maxPerDay) return false;
-
-    try {
-      await this.db
-        .prepare(
-          `UPDATE rate_limits SET count = count - 1
-            WHERE ip_hash = ? AND day = ? AND count > 0`,
-        )
-        .bind(ipHash, day)
-        .run();
-    } catch {
-      return false;
-    }
-    return true;
-  }
-
-  /**
-   * Give back a slot that was reserved for upstream work never done.
-   *
-   * Distinct from a refund: a refund forgives work that ran and failed, and is
-   * capped so a target that always fails cannot be replayed for free. A release
-   * cancels a reservation, so it is not capped. Charging one would make a cache
-   * hit cost a slot, and a cache hit reaches no upstream host at all.
+   * It needs no cap of its own. The submission counter already charged for the
+   * upstream requests the attempt made, and that one is never given back, so a
+   * target that fails every time still runs out of submissions.
    */
   async releaseRateLimit(ipHash: string): Promise<void> {
     try {
@@ -238,30 +227,6 @@ export class Store {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * How many submissions from this address failed to resolve to a commit today,
-   * or null when the counter cannot be read.
-   *
-   * Counted separately from the analysis slots. A submission that never
-   * resolves still spends an upstream fetch, so it needs a ceiling of its own,
-   * and a mistyped package name must not cost an honest visitor an analysis.
-   */
-  async resolutionFailures(ipHash: string): Promise<number | null> {
-    try {
-      const row = await this.db
-        .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
-        .bind(failureKey(ipHash), utcDay())
-        .first<{ count: number }>();
-      return typeof row?.count === "number" ? row.count : 0;
-    } catch {
-      return null;
-    }
-  }
-
-  async recordResolutionFailure(ipHash: string): Promise<void> {
-    await this.bump(failureKey(ipHash), utcDay());
   }
 
   /**
@@ -311,10 +276,6 @@ export class Store {
       .bind(month, Math.round(microCents))
       .run();
   }
-}
-
-function failureKey(ipHash: string): string {
-  return `resolve:${ipHash}`;
 }
 
 function hydrate(row: {
