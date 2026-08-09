@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { label } from "../lib/label";
 import type { Report } from "../types";
 
 /**
@@ -149,7 +150,7 @@ export function renderEvidence(report: Report, nonceOverride?: string): string {
   lines.push(`Commit analysed: ${report.target.sha}`);
   if (report.target.registry) {
     lines.push(
-      `Published as: ${report.target.registry.kind} package ${report.target.registry.packageName}@${report.target.registry.version}`,
+      `Published as: ${report.target.registry.kind} package ${label(report.target.registry.packageName)}@${label(report.target.registry.version)}`,
     );
   }
   lines.push(`Deterministic verdict tier: ${report.verdict}`);
@@ -225,7 +226,10 @@ function stripEmDashes(text: string): string {
 function estimateInputTokens(report: Report): number {
   const chars =
     SYSTEM.length +
-    report.findings.reduce((n, f) => n + f.statement.length + f.evidence.length, 0) +
+    report.findings.reduce(
+      (n, f) => n + f.statement.length + f.evidence.length + (f.quote?.length ?? 0),
+      0,
+    ) +
     report.notChecked.join("").length +
     report.proseExcerpts.reduce((n, e) => n + e.text.length, 0);
   return Math.ceil(chars / 4) + 200;

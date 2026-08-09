@@ -1,3 +1,4 @@
+import { label, labelList } from "../lib/label";
 import type { Finding, TreeEntry } from "../types";
 
 const BINARY_EXT =
@@ -57,7 +58,7 @@ export function censusSurface(entries: TreeEntry[], treeTruncated: boolean): Sur
       severity: "note",
       concern: "unauditable-surface:committed-binaries",
       statement: `${executables.length} compiled or packaged artefact${executables.length === 1 ? " is" : "s are"} committed to the repository. Reading the source does not tell you what these contain.`,
-      evidence: executables.slice(0, 3).join(", "),
+      evidence: labelList(executables, 3),
       method: "tree",
     });
   }
@@ -67,8 +68,8 @@ export function censusSurface(entries: TreeEntry[], treeTruncated: boolean): Sur
       check: "unauditable-surface",
       severity: "note",
       concern: "unauditable-surface:generated-bundle",
-      statement: `${bundle.path} is a ${Math.round(bundle.size / 1024)} KB generated JavaScript file. It is plain text but cannot be matched line for line against its sources without running the project's own build.`,
-      evidence: bundle.path,
+      statement: `${label(bundle.path)} is a ${Math.round(bundle.size / 1024)} KB generated JavaScript file. It is plain text but cannot be matched line for line against its sources without running the project's own build.`,
+      evidence: label(bundle.path),
       method: "tree",
     });
   }

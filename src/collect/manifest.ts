@@ -1,3 +1,4 @@
+import { label, labelList } from "../lib/label";
 import type { Finding } from "../types";
 
 /**
@@ -38,7 +39,7 @@ export function analysePackageJson(path: string, source: string): Finding[] {
       severity: "warning",
       concern: "install-path:lifecycle-scripts",
       statement: `Installing this package runs ${present.length} lifecycle script${present.length === 1 ? "" : "s"} automatically: ${present.join(", ")}. What they run is quoted verbatim.`,
-      evidence: `${path} scripts`,
+      evidence: `${label(path)} scripts`,
       method: "file",
       quote: present.map((n) => `${n}: ${truncate(scripts[n]!)}`).join("; "),
     });
@@ -49,7 +50,7 @@ export function analysePackageJson(path: string, source: string): Finding[] {
       concern: "install-path:lifecycle-scripts",
       statement:
         "The package manifest declares no preinstall, install, postinstall or prepare script, so a package manager install does not execute code from this package.",
-      evidence: `${path} scripts`,
+      evidence: `${label(path)} scripts`,
       method: "file",
     });
   }
@@ -61,8 +62,8 @@ export function analysePackageJson(path: string, source: string): Finding[] {
       check: "install-path",
       severity: "note",
       concern: "install-path:executables",
-      statement: `The package puts ${binNames.length} executable${binNames.length === 1 ? "" : "s"} on PATH: ${binNames.join(", ")}.`,
-      evidence: `${path} bin`,
+      statement: `The package puts ${binNames.length} executable${binNames.length === 1 ? "" : "s"} on PATH: ${labelList(binNames)}.`,
+      evidence: `${label(path)} bin`,
       method: "file",
     });
   }
@@ -79,8 +80,8 @@ export function analysePyproject(path: string, source: string): Finding[] {
       check: "install-path",
       severity: "note",
       concern: "install-path:build-backend",
-      statement: `The Python build backend is ${backend[1]}. A pip install runs this backend, which compiles or generates whatever the backend is configured to produce.`,
-      evidence: `${path} build-system`,
+      statement: `The Python build backend is ${label(backend[1]!)}. A pip install runs this backend, which compiles or generates whatever the backend is configured to produce.`,
+      evidence: `${label(path)} build-system`,
       method: "file",
     },
   ];
