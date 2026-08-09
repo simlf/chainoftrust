@@ -54,17 +54,18 @@ export async function resolveTarget(f: Fetcher, input: ParsedInput): Promise<Res
   }
 
   const ref = requestedRef || repo.defaultBranch;
-  const sha = await resolveSha(f, owner, name, ref);
-  if (!sha) throw new TargetNotFound(`No commit found for ref "${ref}".`);
+  const pinned = await resolveRef(f, owner, name, ref);
+  if (!pinned) throw new TargetNotFound(`No commit found for ref "${ref}".`);
+  const { sha, resolvedRef } = pinned;
 
   return {
     meta: repo.meta,
     target: {
-      cacheKey: cacheKeyFor(owner, name, sha),
+      cacheKey: cacheKeyFor(owner, name, sha, resolved.registry),
       host: "github",
       owner,
       name,
-      requestedRef,
+      requestedRef: requestedRef ? resolvedRef : "",
       sha,
       defaultBranch: repo.defaultBranch,
       ...(resolved.registry ? { registry: resolved.registry } : {}),
@@ -124,7 +125,7 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
 
   for (const file of fetched) {
     if (file.path.endsWith("package.json")) {
-      findings.push(...analysePackageJson(file.path, file.text).findings);
+      findings.push(...analysePackageJson(file.path, file.text));
     } else if (file.path.endsWith("pyproject.toml")) {
       findings.push(...analysePyproject(file.path, file.text));
     } else if (agentScan.hookManifests.includes(file.path)) {
@@ -181,6 +182,33 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
       fetchBudgetExhausted: f.budgetExhausted,
     },
   };
+}
+
+/**
+ * Pin a ref, tolerating a pasted subdirectory URL.
+ *
+ * A GitHub tree URL puts the branch and the path in the same place, so
+ * `tree/main/docs` parses as the ref "main/docs". Trying the whole ref first
+ * keeps a genuine slashed branch such as `release/1.x` working, and trimming
+ * trailing segments afterwards resolves the subdirectory paste to its branch
+ * instead of refusing a URL that is perfectly valid.
+ */
+async function resolveRef(
+  f: Fetcher,
+  owner: string,
+  name: string,
+  ref: string,
+): Promise<{ sha: string; resolvedRef: string } | null> {
+  const segments = ref.split("/").filter(Boolean);
+  // Bounded so a deep path cannot turn one submission into a dozen API calls.
+  const floor = Math.max(1, segments.length - 4);
+  for (let take = segments.length; take >= floor; take--) {
+    if (f.remaining <= 0) break;
+    const candidate = segments.slice(0, take).join("/");
+    const sha = await resolveSha(f, owner, name, candidate);
+    if (sha) return { sha, resolvedRef: candidate };
+  }
+  return null;
 }
 
 /** npm and PyPI inputs are resolved to the repository they point at. */

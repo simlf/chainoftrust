@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { InvalidTarget, cacheKeyFor, parseTarget } from "../src/lib/target";
+import {
+  InvalidTarget,
+  cacheKeyFor,
+  parseTarget,
+  registryQualifier,
+} from "../src/lib/target";
 
 describe("target parsing", () => {
   it("accepts the shapes a person actually pastes", () => {
@@ -100,5 +105,43 @@ describe("cache identity", () => {
 
   it("separates two commits of the same repository", () => {
     expect(cacheKeyFor("o", "r", "aaa")).not.toBe(cacheKeyFor("o", "r", "bbb"));
+  });
+
+  it("separates a registry submission from the repository at the same commit", () => {
+    // A package submission runs the registry-provenance check and a bare
+    // repository submission does not. Sharing a row serves the report without
+    // that check to someone who asked for it, with nothing saying it was
+    // skipped.
+    const repo = cacheKeyFor("astral-sh", "uv", "abc");
+    const pypi = cacheKeyFor("astral-sh", "uv", "abc", { kind: "pypi", packageName: "uv" });
+    const npm = cacheKeyFor("astral-sh", "uv", "abc", { kind: "npm", packageName: "uv" });
+
+    expect(new Set([repo, pypi, npm]).size).toBe(3);
+    expect(pypi.startsWith(repo)).toBe(true);
+  });
+
+  it("case-folds the package name so one package is one row", () => {
+    expect(cacheKeyFor("o", "r", "s", { kind: "npm", packageName: "UV" })).toBe(
+      cacheKeyFor("o", "r", "s", { kind: "npm", packageName: "uv" }),
+    );
+  });
+});
+
+describe("registry qualifier carried in a verdict URL", () => {
+  it("round-trips the kind and the package name", () => {
+    expect(registryQualifier("npm:@playwright/mcp")).toEqual({
+      kind: "npm",
+      packageName: "@playwright/mcp",
+    });
+    expect(registryQualifier("pypi:aider-chat")).toEqual({
+      kind: "pypi",
+      packageName: "aider-chat",
+    });
+  });
+
+  it("refuses anything that is not a package name", () => {
+    for (const bad of ["", "npm:", "gem:rails", "npm:../../etc/passwd", "uv"]) {
+      expect(registryQualifier(bad), bad).toBeNull();
+    }
   });
 });

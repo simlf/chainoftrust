@@ -87,7 +87,7 @@ ${r.scorecard ? `<li>OpenSSF Scorecard: ${esc(r.scorecard.score)}/10, published 
 ${stored.writeupModel ? `<li>Summary written by ${esc(stored.writeupModel)} over the findings above. It was given no other input.</li>` : ""}
 </ul>
 
-<p><a href="${esc(verdictPath(r))}?format=json">This report as JSON</a> &middot; <a href="/">Check another repository</a></p>`;
+<p><a href="${esc(verdictJsonPath(r))}">This report as JSON</a> &middot; <a href="/">Check another repository</a></p>`;
 
   return page({ title: `${repo} - chainoftrust.dev`, body, contact, wide: true });
 }
@@ -100,8 +100,22 @@ function finding(f: Report["findings"][number]): string {
 </div>`;
 }
 
+/**
+ * The report's own address. The registry qualifier rides as a query parameter
+ * so the plain /r/github/:owner/:name/:sha route keeps resolving, while an npm
+ * and a PyPI report on the same commit stay distinguishable.
+ */
 export function verdictPath(r: Report): string {
-  return `/r/github/${encodeURIComponent(r.target.owner)}/${encodeURIComponent(r.target.name)}/${encodeURIComponent(r.target.sha)}`;
+  const path = `/r/github/${encodeURIComponent(r.target.owner)}/${encodeURIComponent(r.target.name)}/${encodeURIComponent(r.target.sha)}`;
+  const reg = r.target.registry;
+  return reg
+    ? `${path}?pkg=${encodeURIComponent(`${reg.kind}:${reg.packageName}`)}`
+    : path;
+}
+
+export function verdictJsonPath(r: Report): string {
+  const path = verdictPath(r);
+  return `${path}${path.includes("?") ? "&" : "?"}format=json`;
 }
 
 export function messagePage(opts: {

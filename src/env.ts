@@ -6,9 +6,11 @@ export interface Env {
   FRESH_ANALYSES_PER_IP_PER_DAY: string;
   CONTACT_EMAIL: string;
 
-  /** Secrets. Both optional: absent degrades behaviour, never breaks it. */
+  /** Secrets. All optional: absent degrades behaviour, never breaks it. */
   ANTHROPIC_API_KEY?: string;
   GITHUB_TOKEN?: string;
+  /** Salt for the rate limiter's IP digests. Absent leaves them enumerable. */
+  RATE_LIMIT_SALT?: string;
 }
 
 export interface Config {
@@ -18,6 +20,7 @@ export interface Config {
   contact: string;
   apiKey?: string;
   githubToken?: string;
+  rateLimitSalt?: string;
 }
 
 export function readConfig(env: Env): Config {
@@ -28,6 +31,7 @@ export function readConfig(env: Env): Config {
     contact: env.CONTACT_EMAIL || "hello@chainoftrust.dev",
     ...(env.ANTHROPIC_API_KEY ? { apiKey: env.ANTHROPIC_API_KEY } : {}),
     ...(env.GITHUB_TOKEN ? { githubToken: env.GITHUB_TOKEN } : {}),
+    ...(env.RATE_LIMIT_SALT ? { rateLimitSalt: env.RATE_LIMIT_SALT } : {}),
   };
 }
 

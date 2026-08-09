@@ -16,8 +16,39 @@ import type { Report } from "../types";
 
 const MAX_OUTPUT_TOKENS = 700;
 
-/** Micro-cents (1e-6 of a US cent) per token, for claude-haiku-4-5. */
-const RATE = { input: 100, output: 500 };
+export interface TokenRate {
+  /** Micro-cents (1e-6 of a US cent) per token. */
+  input: number;
+  output: number;
+}
+
+/**
+ * Per-model token rates. MODEL_ID is configuration, so a single hardcoded rate
+ * turns the monthly ceiling into a number that only holds for one model. An
+ * unrecognised id is priced at the most expensive model here, which can only
+ * make the guard stop early, never late. docs/cloudflare-spend-controls.md
+ * names this guard as the only real ceiling, so it has to fail in that
+ * direction.
+ */
+const MODEL_RATES: { prefix: string; rate: TokenRate }[] = [
+  { prefix: "claude-haiku-4-5", rate: { input: 100, output: 500 } },
+  { prefix: "claude-3-5-haiku", rate: { input: 80, output: 400 } },
+  { prefix: "claude-3-haiku", rate: { input: 25, output: 125 } },
+  { prefix: "claude-sonnet", rate: { input: 300, output: 1500 } },
+  { prefix: "claude-3-7-sonnet", rate: { input: 300, output: 1500 } },
+  { prefix: "claude-3-5-sonnet", rate: { input: 300, output: 1500 } },
+  { prefix: "claude-opus", rate: { input: 1500, output: 7500 } },
+];
+
+const PESSIMISTIC_RATE: TokenRate = { input: 1500, output: 7500 };
+
+export function rateFor(modelId: string): TokenRate {
+  const id = modelId.toLowerCase();
+  const matches = MODEL_RATES.filter((entry) => id.includes(entry.prefix));
+  if (matches.length === 0) return PESSIMISTIC_RATE;
+  // Longest prefix wins, so claude-haiku-4-5 is not priced as claude-3-haiku.
+  return matches.sort((a, b) => b.prefix.length - a.prefix.length)[0]!.rate;
+}
 
 export interface WriteupResult {
   text: string | null;
@@ -58,7 +89,8 @@ export async function writeUp(
   // return the deterministic verdict without prose. The findings are all still
   // there; only the summary is missing. This costs nothing and makes the worst
   // case of a flood an uglier page rather than a bill.
-  const worstCase = estimateWorstCaseMicroCents(report);
+  const rate = rateFor(opts.model);
+  const worstCase = estimateWorstCaseMicroCents(report, rate);
   if (opts.budgetRemainingMicroCents < worstCase) {
     return { text: null, model: null, microCents: 0, degradedReason: "budget" };
   }
@@ -80,8 +112,8 @@ export async function writeUp(
       .trim();
 
     const microCents =
-      response.usage.input_tokens * RATE.input +
-      response.usage.output_tokens * RATE.output;
+      response.usage.input_tokens * rate.input +
+      response.usage.output_tokens * rate.output;
 
     if (!text) {
       return { text: null, model: null, microCents, degradedReason: "error" };
@@ -90,7 +122,12 @@ export async function writeUp(
   } catch {
     // A model outage must not take the service down. The deterministic verdict
     // is the product; the prose is the finish on it.
-    return { text: null, model: null, microCents: 0, degradedReason: "error" };
+    //
+    // The failure is still charged at the worst-case estimate. A call can fail
+    // after tokens were consumed, on an SDK retry or on a response that arrives
+    // and then does not parse, and recording zero would let a sustained error
+    // rate walk straight past the monthly ceiling.
+    return { text: null, model: null, microCents: worstCase, degradedReason: "error" };
   }
 }
 
@@ -159,12 +196,12 @@ function stripEmDashes(text: string): string {
   return text.replace(/\s*[—–]\s*/g, ", ");
 }
 
-function estimateWorstCaseMicroCents(report: Report): number {
+export function estimateWorstCaseMicroCents(report: Report, rate: TokenRate): number {
   const chars =
     SYSTEM.length +
     report.findings.reduce((n, f) => n + f.statement.length + f.evidence.length, 0) +
     report.notChecked.join("").length +
     report.proseExcerpts.reduce((n, e) => n + e.text.length, 0);
   const inputTokens = Math.ceil(chars / 4) + 200;
-  return inputTokens * RATE.input + MAX_OUTPUT_TOKENS * RATE.output;
+  return inputTokens * rate.input + MAX_OUTPUT_TOKENS * rate.output;
 }

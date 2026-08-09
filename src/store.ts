@@ -30,19 +30,35 @@ export class Store {
         writeup_model: string | null;
         created_at: number;
       }>();
-    if (!row) return null;
+    return row ? hydrate(row) : null;
+  }
 
-    try {
-      return {
-        report: JSON.parse(row.report_json) as Report,
-        writeup: row.writeup,
-        writeupModel: row.writeup_model,
-        cached: true,
-        createdAt: row.created_at,
-      };
-    } catch {
-      return null;
-    }
+  /**
+   * Most recent verdict for one commit, whichever cache key it was filed under.
+   * A registry submission and a bare repository submission at the same commit
+   * are separate rows, and the /r/github/:owner/:name/:sha route names neither,
+   * so it resolves to the newest of them.
+   */
+  async getVerdictAtCommit(
+    owner: string,
+    name: string,
+    sha: string,
+  ): Promise<StoredVerdict | null> {
+    const row = await this.db
+      .prepare(
+        `SELECT report_json, writeup, writeup_model, created_at
+           FROM verdicts
+          WHERE host = 'github' AND owner = ? AND name = ? AND ref = ?
+          ORDER BY created_at DESC LIMIT 1`,
+      )
+      .bind(owner.toLowerCase(), name.toLowerCase(), sha)
+      .first<{
+        report_json: string;
+        writeup: string | null;
+        writeup_model: string | null;
+        created_at: number;
+      }>();
+    return row ? hydrate(row) : null;
   }
 
   /** Most recent verdict for a repository, whatever commit it was pinned to. */
@@ -61,18 +77,7 @@ export class Store {
         writeup_model: string | null;
         created_at: number;
       }>();
-    if (!row) return null;
-    try {
-      return {
-        report: JSON.parse(row.report_json) as Report,
-        writeup: row.writeup,
-        writeupModel: row.writeup_model,
-        cached: true,
-        createdAt: row.created_at,
-      };
-    } catch {
-      return null;
-    }
+    return row ? hydrate(row) : null;
   }
 
   async putVerdict(
@@ -106,11 +111,26 @@ export class Store {
   }
 
   /**
-   * Consume one fresh-analysis slot. Called only when a cache miss means real
-   * work; a cache hit never reaches this.
+   * Is there a slot left today? Read only, so a submission that never produces
+   * a report costs nothing. Nothing is written until consumeRateLimit runs.
+   */
+  async checkRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
+    const day = utcDay();
+    const row = await this.db
+      .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
+      .bind(ipHash, day)
+      .first<{ count: number }>();
+    const used = row?.count ?? 0;
+    return { allowed: used < limit, used, limit };
+  }
+
+  /**
+   * Consume one fresh-analysis slot. Called only once a report has been stored,
+   * so a transient GitHub or model failure does not spend someone's quota on an
+   * analysis that produced nothing. A cache hit never reaches this.
    */
   async consumeRateLimit(ipHash: string, limit: number): Promise<RateLimitResult> {
-    const day = new Date().toISOString().slice(0, 10);
+    const day = utcDay();
 
     await this.db
       .prepare(
@@ -119,6 +139,10 @@ export class Store {
       )
       .bind(ipHash, day)
       .run();
+
+    // Yesterday's counters answer no question anyone can ask, and nothing else
+    // ever deletes them, so the table would grow for the life of the deployment.
+    await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
 
     const row = await this.db
       .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
@@ -154,11 +178,46 @@ export class Store {
   }
 }
 
+function hydrate(row: {
+  report_json: string;
+  writeup: string | null;
+  writeup_model: string | null;
+  created_at: number;
+}): StoredVerdict | null {
+  try {
+    return {
+      report: JSON.parse(row.report_json) as Report,
+      writeup: row.writeup,
+      writeupModel: row.writeup_model,
+      cached: true,
+      createdAt: row.created_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The UTC day a counter belongs to. */
+export function utcDay(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
 /**
  * Salted hash of the client IP. The raw address is never written down: the
  * rate limiter only needs to recognise a repeat visitor within one day.
+ *
+ * The salt matters. IPv4 is small enough to enumerate against a known-constant
+ * salt in seconds, so the day is always mixed in and RATE_LIMIT_SALT is mixed
+ * in when it is set. Without the secret the digest is still enumerable by
+ * anyone who can read the table, which is why the day rotation is the floor
+ * and not the guarantee. Secrets stay optional by design: an absent salt
+ * degrades the property, it does not stop the Worker booting.
  */
-export async function hashIp(ip: string, salt: string): Promise<string> {
+export async function hashIp(
+  ip: string,
+  opts: { day: string; secret?: string },
+): Promise<string> {
+  const salt = `${opts.secret ?? "chainoftrust"}:${opts.day}`;
   const data = new TextEncoder().encode(`${salt}:${ip}`);
   const digest = await crypto.subtle.digest("SHA-256", data);
   return [...new Uint8Array(digest)]

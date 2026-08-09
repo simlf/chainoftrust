@@ -11,25 +11,15 @@ import type { Finding } from "../types";
 
 const LIFECYCLE = ["preinstall", "install", "postinstall", "prepare"] as const;
 
-export interface ManifestFacts {
-  findings: Finding[];
-  hasLifecycleScript: boolean;
-  /** Entry points worth reading for the blast-radius pass. */
-  entryPoints: string[];
-  dependencies: string[];
-}
-
-export function analysePackageJson(path: string, source: string): ManifestFacts {
+export function analysePackageJson(path: string, source: string): Finding[] {
   let pkg: {
     scripts?: Record<string, string>;
     bin?: Record<string, string> | string;
-    main?: string;
-    dependencies?: Record<string, string>;
   };
   try {
     pkg = JSON.parse(source);
   } catch {
-    return { findings: [], hasLifecycleScript: false, entryPoints: [], dependencies: [] };
+    return [];
   }
 
   const findings: Finding[] = [];
@@ -70,21 +60,7 @@ export function analysePackageJson(path: string, source: string): ManifestFacts 
     });
   }
 
-  const entryPoints: string[] = [];
-  if (typeof pkg.main === "string") entryPoints.push(normalise(pkg.main));
-  if (typeof bin === "string") entryPoints.push(normalise(bin));
-  else for (const target of Object.values(bin ?? {})) entryPoints.push(normalise(target));
-  for (const name of present) {
-    const referenced = /(?:^|\s)([\w./-]+\.(?:js|mjs|cjs|ts|sh))/.exec(scripts[name]!);
-    if (referenced) entryPoints.push(normalise(referenced[1]!));
-  }
-
-  return {
-    findings,
-    hasLifecycleScript: present.length > 0,
-    entryPoints: [...new Set(entryPoints)].slice(0, 3),
-    dependencies: Object.keys(pkg.dependencies ?? {}),
-  };
+  return findings;
 }
 
 /** Python packaging: the analogous question is whether the build is declarative. */
@@ -108,6 +84,3 @@ function truncate(s: string): string {
   return flat.length <= 80 ? flat : `${flat.slice(0, 79)}…`;
 }
 
-function normalise(p: string): string {
-  return p.replace(/^\.\//, "");
-}

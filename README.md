@@ -66,7 +66,7 @@ degraded mode: the deterministic verdict and all findings, no written summary.
 That is a supported mode, not an outage.
 
 ```bash
-npm test          # 60 tests, no network
+npm test          # 92 tests, no network
 npm run typecheck
 ```
 
@@ -80,6 +80,7 @@ npx wrangler d1 create chainoftrust       # one time; paste the id in
 npm run db:migrate:remote
 npx wrangler secret put ANTHROPIC_API_KEY # optional, enables the write-up
 npx wrangler secret put GITHUB_TOKEN      # optional, raises the API rate limit
+npx wrangler secret put RATE_LIMIT_SALT   # optional, salts the stored IP digests
 npm run deploy
 ```
 
@@ -117,8 +118,10 @@ envelope. Raise the variable to spend more.
 | `FRESH_ANALYSES_PER_IP_PER_DAY` | `5` | Cache hits are exempt |
 | `CONTACT_EMAIL` | | Shown in the footer for corrections |
 
-Secrets: `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`. Both optional; absent degrades
-behaviour rather than breaking it.
+Secrets: `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `RATE_LIMIT_SALT`. All optional;
+absent degrades behaviour rather than breaking it. Without `RATE_LIMIT_SALT`
+the rate limiter's IP digests are salted with the UTC day alone, which rotates
+them daily but leaves them enumerable by anyone who can read the table.
 
 ## The API
 
