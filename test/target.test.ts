@@ -96,6 +96,17 @@ describe("target parsing", () => {
     expect(() => parseTarget("own%2Fer/repo")).toThrow(InvalidTarget);
     expect(() => parseTarget("npm:../../etc/passwd")).toThrow(InvalidTarget);
   });
+
+  it("refuses a dot segment that a URL parser would resolve away", () => {
+    // repos/owner/.. normalises to a different endpoint on the same host.
+    for (const bad of [
+      "https://github.com/owner/..",
+      "https://github.com/owner/.",
+      "owner/..",
+    ]) {
+      expect(() => parseTarget(bad), bad).toThrow(InvalidTarget);
+    }
+  });
 });
 
 describe("cache identity", () => {

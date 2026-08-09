@@ -124,31 +124,7 @@ export class Store {
     const day = utcDay();
     const atLimit: RateLimitResult = { allowed: false, used: limit + 1, limit };
 
-    let used: number | null = null;
-    try {
-      // RETURNING makes the increment and the count one round trip. Reading the
-      // count back separately would let concurrent submissions see the same
-      // value and all decide they were within the limit.
-      const row = await this.db
-        .prepare(
-          `INSERT INTO rate_limits (ip_hash, day, count) VALUES (?, ?, 1)
-           ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1
-           RETURNING count`,
-        )
-        .bind(ipHash, day)
-        .first<{ count: number }>();
-      used = typeof row?.count === "number" ? row.count : null;
-
-      if (used === null) {
-        const readBack = await this.db
-          .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
-          .bind(ipHash, day)
-          .first<{ count: number }>();
-        used = typeof readBack?.count === "number" ? readBack.count : null;
-      }
-    } catch {
-      return atLimit;
-    }
+    const used = await this.bump(ipHash, day);
 
     // A counter nobody can read is treated as spent. A storage fault that made
     // the limiter answer "not yet at the limit" would disable the daily cap for
@@ -167,18 +143,65 @@ export class Store {
   }
 
   /**
-   * Give back a slot consumed by an analysis that produced nothing. The limit
-   * counts analyses that produced a report, so a transient GitHub or model
-   * failure must not cost a submitter one of their five.
+   * Give back a slot consumed by an analysis that produced nothing, up to
+   * maxPerDay times.
+   *
+   * A transient GitHub or model failure must not cost a submitter one of their
+   * five. An unbounded refund would make a target that fails every time free to
+   * replay, and each replay still drives a full collection, so the daily limit
+   * would bound successful analyses rather than work. Refunds are counted in
+   * the same table under their own key, so no schema changes with this.
+   *
+   * Returns whether the slot was actually given back.
    */
-  async refundRateLimit(ipHash: string): Promise<void> {
-    await this.db
-      .prepare(
-        `UPDATE rate_limits SET count = count - 1
-          WHERE ip_hash = ? AND day = ? AND count > 0`,
-      )
-      .bind(ipHash, utcDay())
-      .run();
+  async refundRateLimit(ipHash: string, maxPerDay: number): Promise<boolean> {
+    const day = utcDay();
+    const refunds = await this.bump(`refund:${ipHash}`, day);
+    if (refunds === null || refunds > maxPerDay) return false;
+
+    try {
+      await this.db
+        .prepare(
+          `UPDATE rate_limits SET count = count - 1
+            WHERE ip_hash = ? AND day = ? AND count > 0`,
+        )
+        .bind(ipHash, day)
+        .run();
+    } catch {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Increment one daily counter and read it back in the same statement.
+   *
+   * RETURNING keeps the increment and the count one round trip, which is what
+   * serialises concurrent requests. D1 documents an empty result set for write
+   * statements, so a driver that does not carry RETURNING rows falls back to a
+   * second read, and a counter that cannot be read at all reads as null so
+   * every caller can decide in the safe direction.
+   */
+  private async bump(key: string, day: string): Promise<number | null> {
+    try {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO rate_limits (ip_hash, day, count) VALUES (?, ?, 1)
+           ON CONFLICT(ip_hash, day) DO UPDATE SET count = count + 1
+           RETURNING count`,
+        )
+        .bind(key, day)
+        .first<{ count: number }>();
+      if (typeof row?.count === "number") return row.count;
+
+      const readBack = await this.db
+        .prepare(`SELECT count FROM rate_limits WHERE ip_hash = ? AND day = ?`)
+        .bind(key, day)
+        .first<{ count: number }>();
+      return typeof readBack?.count === "number" ? readBack.count : null;
+    } catch {
+      return null;
+    }
   }
 
   /**

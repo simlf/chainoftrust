@@ -104,7 +104,9 @@ What this repository does instead:
   without prose** rather than refusing service or spending more.
 - Cache by commit SHA. The same commit is never analysed twice, and a cache hit
   costs nothing and never counts against a quota.
-- 5 fresh analyses per IP per UTC day.
+- 5 fresh analyses per IP per UTC day. An analysis that fails before a report is
+  stored is refunded, but only a bounded number of times a day, so the limit
+  bounds the work one address can drive and not just the reports it receives.
 
 The default budget of 300 cents/month is deliberately below the draft's 30 EUR
 envelope. Raise the variable to spend more.

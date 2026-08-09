@@ -110,6 +110,83 @@ describe("pinning a submission to a commit", () => {
   });
 });
 
+describe("a repository named by registry metadata", () => {
+  const pypiDoc = (repository: string) => ({
+    "https://pypi.org/pypi/evil/json": {
+      info: { name: "evil", version: "1.0.0", project_urls: { Source: repository } },
+      urls: [],
+    },
+  });
+
+  it("refuses an owner that would walk out of the repos path", async () => {
+    // github.com/../user resolves to owner "..", and api.github.com/repos/../user
+    // normalises to a different endpoint on the same allowlisted host, reached
+    // with the GitHub token attached.
+    const f = fakeFetcher(pypiDoc("https://github.com/../user"));
+
+    await expect(
+      resolveTarget(f as unknown as Fetcher, {
+        kind: "pypi",
+        owner: "",
+        name: "evil",
+        ref: "",
+      }),
+    ).rejects.toBeInstanceOf(TargetNotFound);
+
+    expect(f.seen.filter((u) => u.startsWith("https://api.github.com"))).toEqual([]);
+  });
+
+  it("refuses a repository name that is only dot segments", async () => {
+    const f = fakeFetcher(pypiDoc("https://github.com/owner/.."));
+
+    await expect(
+      resolveTarget(f as unknown as Fetcher, {
+        kind: "pypi",
+        owner: "",
+        name: "evil",
+        ref: "",
+      }),
+    ).rejects.toBeInstanceOf(TargetNotFound);
+
+    expect(f.seen.filter((u) => u.startsWith("https://api.github.com"))).toEqual([]);
+  });
+
+  it("refuses an owner carrying characters GitHub does not allow", async () => {
+    for (const repository of [
+      "https://github.com/own er/repo",
+      "https://github.com/-/repo",
+      "https://github.com/own%2Fer/repo",
+    ]) {
+      const f = fakeFetcher(pypiDoc(repository));
+      await expect(
+        resolveTarget(f as unknown as Fetcher, {
+          kind: "pypi",
+          owner: "",
+          name: "evil",
+          ref: "",
+        }),
+        repository,
+      ).rejects.toBeInstanceOf(TargetNotFound);
+    }
+  });
+
+  it("accepts an ordinary repository field", async () => {
+    const f = fakeFetcher({
+      ...pypiDoc("https://github.com/o/r"),
+      ...repoRoute,
+      "https://api.github.com/repos/o/r/commits/main": { sha: "abc123" },
+    });
+
+    const resolved = await resolveTarget(f as unknown as Fetcher, {
+      kind: "pypi",
+      owner: "",
+      name: "evil",
+      ref: "",
+    });
+    expect(resolved.target).toMatchObject({ owner: "o", name: "r", sha: "abc123" });
+  });
+});
+
 describe("cache identity of a registry submission", () => {
   it("differs from the same commit submitted as a bare repository", async () => {
     const routes = {

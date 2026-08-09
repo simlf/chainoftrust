@@ -87,9 +87,28 @@ export function parseTarget(raw: string): ParsedInput {
   );
 }
 
+/**
+ * Is this pair safe to interpolate into an api.github.com path?
+ *
+ * Every route to the fetcher runs through here, not just the pasted URL. A
+ * repository field read out of registry metadata is target-controlled text, and
+ * a dot segment inside it survives into a URL that the URL parser then
+ * normalises into a different endpoint on the same allowlisted host.
+ */
+export function isRepoIdentifier(owner: string, name: string): boolean {
+  if (!OWNER.test(owner) || !REPO.test(name)) return false;
+  return !DOT_SEGMENT.test(owner) && !DOT_SEGMENT.test(name);
+}
+
+const DOT_SEGMENT = /^\.+$/;
+
 function githubTarget(owner: string, name: string, ref: string): ParsedInput {
-  if (!OWNER.test(owner)) throw new InvalidTarget("That owner name is not valid.");
-  if (!REPO.test(name)) throw new InvalidTarget("That repository name is not valid.");
+  if (!OWNER.test(owner) || DOT_SEGMENT.test(owner)) {
+    throw new InvalidTarget("That owner name is not valid.");
+  }
+  if (!REPO.test(name) || DOT_SEGMENT.test(name)) {
+    throw new InvalidTarget("That repository name is not valid.");
+  }
   if (!REF.test(ref)) throw new InvalidTarget("That ref is not valid.");
   return { kind: "github", owner, name, ref };
 }
