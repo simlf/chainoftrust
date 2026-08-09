@@ -137,7 +137,7 @@ export async function fetchContributors(
   const top = r[0]!;
   return {
     total: r.length,
-    topLogin: top.login,
+    topLogin: typeof top.login === "string" && top.login ? top.login : null,
     topShare: total > 0 ? top.contributions / total : 0,
   };
 }

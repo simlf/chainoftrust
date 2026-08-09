@@ -623,14 +623,17 @@ async function trustRootFindings(
   const contributors = await fetchContributors(f, owner, name);
   if (contributors) {
     const share = Math.round(contributors.topShare * 100);
+    const topLogin = contributors.topLogin
+      ? label(contributors.topLogin)
+      : "an account the API does not name";
     findings.push({
       check: "trust-root",
       severity: share >= 90 ? "note" : "clean",
       concern: "trust-root:concentration",
       statement:
         share >= 90
-          ? `One account, ${label(contributors.topLogin ?? "")}, accounts for about ${share}% of commits among the ${contributors.total} most active contributors. The trust root is effectively one person.`
-          : `Among the ${contributors.total} most active contributors, the busiest (${contributors.topLogin}) accounts for about ${share}% of commits.`,
+          ? `One account, ${topLogin}, accounts for about ${share}% of commits among the ${contributors.total} most active contributors. The trust root is effectively one person.`
+          : `Among the ${contributors.total} most active contributors, the busiest (${topLogin}) accounts for about ${share}% of commits.`,
       evidence: "GitHub contributors API, first page",
       method: "api",
     });

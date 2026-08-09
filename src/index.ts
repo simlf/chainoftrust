@@ -88,19 +88,19 @@ async function handleAnalyse(
     ...(config.rateLimitSalt ? { secret: config.rateLimitSalt } : {}),
   });
 
-  // Resolving a submission costs an upstream fetch before any slot is spent, so
-  // submissions that resolve to nothing carry a daily ceiling of their own. Up
-  // to that ceiling a typo is free. Past it the submission has to spend one of
-  // the five analysis slots up front, which stops a scripted replay of a name
-  // that does not exist while leaving an address that still has slots able to
-  // analyse something real.
+  // One rule decides every counter on this path: a slot is spent only by work
+  // that reached an upstream host and produced something. A reservation is
+  // taken before upstream work when this address has already spent the free
+  // resolution attempts, and every exit below settles that reservation. A cache
+  // hit reaches nothing, so it settles as "reached-nothing" and costs nothing,
+  // whatever the address did earlier.
   const failures = await store.resolutionFailures(ipHash);
   if (failures === null) return storageFaultPage(config);
 
-  let slot: RateLimitResult | null = null;
+  const meter = new SubmissionMeter(store, ipHash, config.ratePerDay);
   if (failures >= FAILED_RESOLUTIONS_PER_DAY) {
-    slot = await store.consumeRateLimit(ipHash, config.ratePerDay);
-    if (!slot.allowed) return refusedPage(slot, config);
+    const reserved = await meter.reserve();
+    if (!reserved.allowed) return refusedPage(reserved, config);
   }
 
   const fetcher = new Fetcher({
@@ -114,6 +114,7 @@ async function handleAnalyse(
     resolved = await resolveTarget(fetcher, input);
   } catch (err) {
     if (err instanceof TargetNotFound) {
+      await meter.settle("resolved-to-nothing");
       await store.recordResolutionFailure(ipHash);
       return homePage({
         contact: config.contact,
@@ -122,9 +123,7 @@ async function handleAnalyse(
         status: 404,
       });
     }
-    // An upstream fault produced nothing, so a slot spent before resolution is
-    // given back on the same terms as one spent after it.
-    if (slot) await store.refundRateLimit(ipHash, config.ratePerDay);
+    await meter.settle("upstream-fault");
     throw err;
   }
 
@@ -133,15 +132,11 @@ async function handleAnalyse(
   // exact behaviour this product wants.
   const cached = await store.getVerdict(resolved.target.cacheKey);
   if (cached) {
-    if (slot) await store.refundRateLimit(ipHash, config.ratePerDay);
+    await meter.settle("reached-nothing");
     return redirect(verdictPath(cached.report));
   }
 
-  // Consumed in one statement before the work. A failed analysis is refunded a
-  // bounded number of times per day, so the limit bounds the work an address
-  // can drive rather than only the reports it gets. The increment is what
-  // serialises concurrent submissions from one address.
-  const limit = slot ?? (await store.consumeRateLimit(ipHash, config.ratePerDay));
+  const limit = await meter.reserve();
   if (!limit.allowed) return refusedPage(limit, config);
 
   try {
@@ -157,10 +152,66 @@ async function handleAnalyse(
     await store.recordSpend(summary.microCents);
 
     await store.putVerdict(report, summary.text, summary.model);
+    await meter.settle("analysed");
     return redirect(verdictPath(report));
   } catch (err) {
-    await store.refundRateLimit(ipHash, config.ratePerDay);
+    await meter.settle("upstream-fault");
     throw err;
+  }
+}
+
+/** What a submission turned out to be, once it is over. */
+type Outcome =
+  /** A report was produced and stored. The only outcome that spends a slot. */
+  | "analysed"
+  /** No upstream host was reached at all, so nothing may be charged. */
+  | "reached-nothing"
+  /** Upstream was reached and named no repository or package. */
+  | "resolved-to-nothing"
+  /** Upstream was reached and failed, or the analysis threw. */
+  | "upstream-fault";
+
+/**
+ * The one place a submission's slot is decided.
+ *
+ * A slot may be reserved before upstream work, because the increment is what
+ * serialises concurrent submissions from one address, but only the outcome
+ * decides whether it stays spent. Releasing a reservation is not a refund and
+ * is not capped: the cap exists so a target that always fails cannot be
+ * replayed for free, and a submission that reached nothing did no work to
+ * forgive. That is what keeps a cache hit free without a special case.
+ */
+class SubmissionMeter {
+  #reserved = false;
+
+  constructor(
+    private readonly store: Store,
+    private readonly ipHash: string,
+    private readonly perDay: number,
+  ) {}
+
+  async reserve(): Promise<RateLimitResult> {
+    if (this.#reserved) return { allowed: true, used: 0, limit: this.perDay };
+    const result = await this.store.consumeRateLimit(this.ipHash, this.perDay);
+    this.#reserved = result.allowed;
+    return result;
+  }
+
+  async settle(outcome: Outcome): Promise<void> {
+    if (!this.#reserved || outcome === "analysed") return;
+    this.#reserved = false;
+
+    if (outcome === "reached-nothing") {
+      await this.store.releaseRateLimit(this.ipHash);
+      return;
+    }
+    // Upstream was reached. A transient failure is forgiven a bounded number of
+    // times a day, and a target that fails every time stops being free after
+    // that. A resolution that found nothing keeps the slot, which is what
+    // bounds a scripted replay of a name that does not exist.
+    if (outcome === "upstream-fault") {
+      await this.store.refundRateLimit(this.ipHash, this.perDay);
+    }
   }
 }
 
