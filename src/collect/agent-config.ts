@@ -105,8 +105,8 @@ export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
   for (const pattern of PATTERNS) {
     const paths = matched.get(pattern.label);
     if (!paths || paths.length === 0) continue;
+    // labelList states its own remainder, so the citation must not add a second.
     const shown = labelList(paths, 3);
-    const more = paths.length > 3 ? ` and ${paths.length - 3} more` : "";
     findings.push({
       check: "agent-config",
       severity: pattern.severity,
@@ -115,7 +115,7 @@ export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
         pattern.trigger === "on-clone"
           ? `The repository ships ${paths.length} ${pattern.label}${paths.length === 1 ? "" : "s"}. A harness that indexes a cloned working tree can pick these up without any install step being run.`
           : `The repository ships ${paths.length} ${pattern.label}${paths.length === 1 ? "" : "s"}.`,
-      evidence: `${shown}${more}`,
+      evidence: shown,
       method: "tree",
     });
   }
