@@ -1,5 +1,5 @@
-import { label } from "../lib/label";
-import type { Finding, ProseExcerpt } from "../types";
+import { label, labelList } from "../lib/label";
+import type { Finding, NotChecked, ProseExcerpt } from "../types";
 
 /**
  * Deliberate prose extraction.
@@ -94,6 +94,22 @@ const MAX_EXCERPTS_TOTAL = 12;
 export interface ProseScan {
   excerpts: ProseExcerpt[];
   findings: Finding[];
+  notChecked: NotChecked[];
+}
+
+/**
+ * What the file listing said about prose, which is a different question from
+ * what was read.
+ *
+ * `candidates` are the prose files the listing actually names, and `complete`
+ * says whether that listing was read in full. Only an absence the listing
+ * establishes can be stated as a finding: a file that exists but was not
+ * fetched, because the per-analysis file cap or the fetch budget ran out first,
+ * is a gap in this report and belongs in notChecked.
+ */
+export interface ProseListing {
+  candidates: string[];
+  complete: boolean;
 }
 
 /** Files worth reading in full, in priority order. Fetching is capped upstream. */
@@ -111,9 +127,13 @@ export const PROSE_CANDIDATES = [
   "README",
 ];
 
-export function scanProse(files: { path: string; text: string }[]): ProseScan {
+export function scanProse(
+  files: { path: string; text: string }[],
+  listing: ProseListing = { candidates: [], complete: false },
+): ProseScan {
   const excerpts: ProseExcerpt[] = [];
   const findings: Finding[] = [];
+  const notChecked: NotChecked[] = [];
   const seenReasons = new Set<string>();
 
   for (const file of files) {
@@ -148,19 +168,36 @@ export function scanProse(files: { path: string; text: string }[]): ProseScan {
     }
   }
 
-  if (files.length === 0) {
+  const read = files.map((file) => file.path);
+  const unread = listing.candidates.filter((path) => !read.includes(path));
+
+  // An absence is only a finding when the listing that establishes it was read
+  // in full and names no prose file at all. Every other shape is a limit of
+  // this report rather than a fact about the repository, and says which files
+  // were read and which were not.
+  if (read.length === 0 && unread.length === 0 && listing.complete) {
     findings.push({
       check: "prose",
       severity: "note",
       concern: "prose:absent",
       statement:
-        "No README, security policy or contributing guide could be read at the analysed commit.",
+        "The file listing at the analysed commit names no README, security policy or contributing guide.",
       evidence: "file listing at the analysed commit",
       method: "prose",
     });
+  } else if (unread.length > 0) {
+    notChecked.push(
+      read.length === 0
+        ? `No prose was read at the analysed commit, so nothing any of it says was searched for. The file listing names ${labelList(unread)}, which this analysis did not read.`
+        : `Prose was read from ${labelList(read)}. The file listing also names ${labelList(unread)}, which this analysis did not read, so nothing it says was searched for.`,
+    );
+  } else if (read.length === 0) {
+    notChecked.push(
+      "No README, security policy or contributing guide was read at the analysed commit, and the file listing that would say whether one is present was not read in full, so this report cannot say whether the project has one.",
+    );
   }
 
-  return { excerpts, findings };
+  return { excerpts, findings, notChecked };
 }
 
 function splitSentences(text: string): string[] {

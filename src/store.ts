@@ -180,10 +180,16 @@ export class Store {
 
     // Yesterday's counters answer no question anyone can ask, and nothing else
     // ever deletes them, so the table would grow for the life of the deployment.
-    try {
-      await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
-    } catch {
-      // The prune is housekeeping. Failing it does not change the decision.
+    // Two bounds keep the prune off the request path's cost: it runs only on the
+    // first bump of a counter, which is once per address per counter per day
+    // rather than once per request, and rate_limits_day makes the delete a range
+    // over stale rows instead of a scan that grows with the live table.
+    if (used === 1) {
+      try {
+        await this.db.prepare(`DELETE FROM rate_limits WHERE day < ?`).bind(day).run();
+      } catch {
+        // The prune is housekeeping. Failing it does not change the decision.
+      }
     }
 
     return used <= limit
