@@ -30,8 +30,9 @@
     // collectors; the model only weighs and explains them.
     "MODEL_ID": "claude-haiku-4-5",
 
-    // Fresh analyses per IP per UTC day. Cache hits are unlimited and never
-    // count against this.
+    // Fresh analyses per IP per UTC day. A cache hit never counts against this,
+    // though it still spends one of the separate daily submission units. Only
+    // the GET verdict URLs are unlimited. See README, "Cost controls".
     "FRESH_ANALYSES_PER_IP_PER_DAY": "5",
 
     "CONTACT_EMAIL": "lefournsimon@gmail.com"
