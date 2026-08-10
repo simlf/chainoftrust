@@ -135,6 +135,10 @@ export function scanProse(
   const findings: Finding[] = [];
   const notChecked: NotChecked[] = [];
   const seenReasons = new Set<string>();
+  // A README that says the same sentence twice, as an install line repeated per
+  // platform section does, would otherwise be quoted twice under the same
+  // heading and twice in prose_excerpts.
+  const seenExcerpts = new Set<string>();
 
   for (const file of files) {
     let perFile = 0;
@@ -148,6 +152,9 @@ export function scanProse(
         if (!probe.pattern.test(sentence)) continue;
 
         const text = trim(sentence);
+        const excerptKey = `${file.path}::${text}`;
+        if (seenExcerpts.has(excerptKey)) break;
+        seenExcerpts.add(excerptKey);
         excerpts.push({ path: file.path, reason: probe.reason, text });
         perFile++;
 
