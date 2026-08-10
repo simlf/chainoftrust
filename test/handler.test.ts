@@ -7,7 +7,7 @@ import type { Env } from "../src/env";
  * models only those shapes and throws on anything else, so a query it does not
  * model cannot pass silently.
  */
-function fakeDb() {
+function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
   const counters = new Map<string, number>();
   const verdicts = new Map<string, string>();
 
@@ -30,6 +30,10 @@ function fakeDb() {
             return;
           }
           if (text.startsWith("INSERT INTO verdicts")) {
+            // Modelling the analysis that gets all the way to publication and
+            // then produces nothing, which is the case the release path pays
+            // a slot back for.
+            if (opts.failVerdictWrites) throw new Error("verdict write failed");
             verdicts.set(String(args[0]), String(args[6]));
             return;
           }
@@ -184,6 +188,31 @@ describe("what a submission costs", () => {
     db.verdicts.clear();
     const sixth = await worker.fetch(submit("o/r"), env);
     expect(sixth.status, "the sixth fresh analysis is the one that is refused").toBe(429);
+  });
+});
+
+describe("an address whose analyses always fail", () => {
+  it("runs the analysis limit plus the release allowance, then is refused", async () => {
+    // The same bound the store states as arithmetic, seen through the HTTP
+    // surface a visitor actually drives: every attempt collects, fails at
+    // publication and gets its slot back, until the release allowance runs out
+    // and a failure simply costs the slot. Nothing here is a retry a person
+    // would notice; the point is that a script cannot turn 100 submissions
+    // into 100 full collections.
+    const db = fakeDb({ failVerdictWrites: true });
+    const env = envWith(db);
+    stubGithub();
+
+    let collections = 0;
+    let refusals = 0;
+    for (let i = 0; i < 100; i++) {
+      const res = await worker.fetch(submit("o/r"), env);
+      if (res.status === 500) collections++;
+      if (res.status === 429) refusals++;
+    }
+
+    expect(collections, "five analysis slots plus five releases").toBe(10);
+    expect(refusals, "every later submission is refused before it collects").toBe(90);
   });
 });
 

@@ -41,6 +41,22 @@ describe("agent-config auto-discovery by file presence", () => {
     expect(scan.findings.some((f) => f.severity === "warning")).toBe(true);
   });
 
+  it("states the truncated remainder once, and it accounts for every path", () => {
+    // obra/superpowers ships 14 skill definitions, and the citation showed
+    // "and 11 more and 11 more" because the caller added a remainder on top of
+    // the one labelList already states.
+    const paths = Array.from({ length: 14 }, (_, i) => `skills/skill-${i}/SKILL.md`);
+    const scan = scanAgentConfig(tree(...paths, "README.md"));
+    const finding = scan.findings.find(
+      (f) => f.concern === "agent-config:agent skill definition",
+    )!;
+    expect(finding.statement).toContain("14 agent skill definitions");
+    expect(finding.evidence.match(/ and \d+ more/g)).toEqual([" and 11 more"]);
+    const named = finding.evidence.split(", ").filter((part) => !/^and \d+ more$/.test(part));
+    expect(named).toHaveLength(3);
+    expect(named.length + 11).toBe(14);
+  });
+
   it("reports a confirmed negative rather than staying silent", () => {
     const scan = scanAgentConfig(tree("src/index.ts", "package.json", "README.md"));
     expect(scan.findings).toHaveLength(1);
