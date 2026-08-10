@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTarget, TargetNotFound } from "../src/collect";
+import { collect, resolveTarget, TargetNotFound } from "../src/collect";
 import type { Fetcher } from "../src/lib/fetcher";
 
 /**
@@ -185,6 +185,31 @@ describe("a repository named by registry metadata", () => {
     }
   });
 
+  it("does not let a registry value choose how long the refusal is", async () => {
+    // project_urls is publisher-controlled text up to the per-file byte cap, and
+    // the refusal it produces is rendered on the home page.
+    const f = fakeFetcher(
+      pypiDoc(`https://github.com/own er/${"a".repeat(4000)}\nSecond line of prose.`),
+    );
+
+    let error = new Error("resolveTarget did not refuse");
+    try {
+      await resolveTarget(f as unknown as Fetcher, {
+        kind: "pypi",
+        owner: "",
+        name: "evil",
+        ref: "",
+      });
+    } catch (e) {
+      error = e as Error;
+    }
+
+    expect(error).toBeInstanceOf(TargetNotFound);
+    expect(error.message.length).toBeLessThan(256);
+    expect(error.message).not.toContain("\n");
+    expect(error.message).not.toContain("Second line of prose");
+  });
+
   it("accepts an ordinary repository field", async () => {
     const f = fakeFetcher({
       ...pypiDoc("https://github.com/o/r"),
@@ -199,6 +224,46 @@ describe("a repository named by registry metadata", () => {
       ref: "",
     });
     expect(resolved.target).toMatchObject({ owner: "o", name: "r", sha: "abc123" });
+  });
+});
+
+describe("what a registry submission costs upstream", () => {
+  it("reads the registry entry once across resolution and collection", async () => {
+    // Resolution reads the entry to learn the repository and the provenance
+    // check reads the same entry for the same package. The fetch budget and the
+    // submission counter are both sized against real upstream requests.
+    const npmUrl = "https://registry.npmjs.org/@example%2Fsdk";
+    const f = fakeFetcher({
+      ...repoRoute,
+      "https://api.github.com/repos/o/r/commits/main": { sha: "abc123" },
+      [npmUrl]: {
+        name: "@example/sdk",
+        "dist-tags": { latest: "1.0.0" },
+        maintainers: [{ name: "one" }],
+        repository: { url: "https://github.com/o/r.git" },
+        versions: {
+          "1.0.0": {
+            version: "1.0.0",
+            dist: { integrity: "sha512-abc", attestations: {} },
+            _npmUser: { name: "publisher", email: "p@example.com" },
+          },
+        },
+      },
+    });
+
+    const resolved = await resolveTarget(f as unknown as Fetcher, {
+      kind: "npm",
+      owner: "",
+      name: "@example/sdk",
+      ref: "",
+    });
+    const evidence = await collect(f as unknown as Fetcher, resolved);
+
+    expect(f.seen.filter((u) => u === npmUrl)).toHaveLength(1);
+    expect(
+      evidence.findings.some((x) => x.concern === "registry-provenance:attestation"),
+      "the provenance check still ran",
+    ).toBe(true);
   });
 });
 

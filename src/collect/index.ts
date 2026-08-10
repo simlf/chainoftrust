@@ -7,6 +7,7 @@ import {
   rawUrl,
   resolveSha,
 } from "../lib/github";
+import type { NpmPackageInfo, PypiPackageInfo } from "../lib/registry";
 import { fetchNpm, fetchPypi, fetchScorecard } from "../lib/registry";
 import type { ParsedInput } from "../lib/target";
 import { label, labelList } from "../lib/label";
@@ -31,9 +32,23 @@ export const CHECKSUM_ASSET =
 
 const MAX_FILES = 12;
 
+/**
+ * The registry document resolution already paid for.
+ *
+ * Resolving an npm or PyPI submission has to read the registry entry to learn
+ * which repository it points at, and the provenance check reads the same entry
+ * for the same package. Carrying it through spends one upstream request where
+ * two were spent before, which the fetch budget and the submission counter are
+ * both sized against.
+ */
+export type RegistryDoc =
+  | { kind: "npm"; info: NpmPackageInfo }
+  | { kind: "pypi"; info: PypiPackageInfo };
+
 export interface Resolved {
   target: TargetRef;
   meta: Evidence["meta"];
+  registryDoc?: RegistryDoc;
 }
 
 /**
@@ -62,6 +77,7 @@ export async function resolveTarget(f: Fetcher, input: ParsedInput): Promise<Res
 
   return {
     meta: repo.meta,
+    ...(resolved.registryDoc ? { registryDoc: resolved.registryDoc } : {}),
     target: {
       cacheKey: cacheKeyFor(owner, name, sha, resolved.registry),
       host: "github",
@@ -144,7 +160,9 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
   findings.push(...prose.findings);
   notChecked.push(...prose.notChecked);
 
-  findings.push(...(await provenanceFindings(f, target, notChecked)));
+  findings.push(
+    ...(await provenanceFindings(f, target, notChecked, resolvedTarget.registryDoc)),
+  );
   findings.push(...(await trustRootFindings(f, owner, name, repo.meta)));
 
   const scorecard = await fetchScorecard(f, owner, name);
@@ -228,19 +246,25 @@ async function resolveRepository(
   name: string;
   requestedRef: string;
   registry?: TargetRef["registry"];
+  registryDoc?: RegistryDoc;
 }> {
   if (input.kind === "github") {
     return { owner: input.owner, name: input.name, requestedRef: input.ref };
   }
 
-  const info =
-    input.kind === "npm" ? await fetchNpm(f, input.name) : await fetchPypi(f, input.name);
-  if (!info) {
-    throw new TargetNotFound(`No ${input.kind} package named "${input.name}".`);
+  const registryDoc: RegistryDoc | null =
+    input.kind === "npm"
+      ? await fetchNpm(f, input.name).then((i) => (i ? { kind: "npm" as const, info: i } : null))
+      : await fetchPypi(f, input.name).then((i) =>
+          i ? { kind: "pypi" as const, info: i } : null,
+        );
+  if (!registryDoc) {
+    throw new TargetNotFound(`No ${input.kind} package named "${label(input.name)}".`);
   }
+  const info = registryDoc.info;
   if (!info.repositoryUrl) {
     throw new TargetNotFound(
-      `The ${input.kind} package "${input.name}" does not declare a GitHub repository, so there is no source to read.`,
+      `The ${input.kind} package "${label(input.name)}" does not declare a GitHub repository, so there is no source to read.`,
     );
   }
   const [rawOwner, rawName] = info.repositoryUrl
@@ -252,13 +276,14 @@ async function resolveRepository(
   // inside an api.github.com path, so it passes the same identifier rules a
   // pasted URL does rather than being trusted because a registry served it.
   if (!isRepoIdentifier(owner, name)) {
-    throw new TargetNotFound(`Could not read a repository out of "${info.repositoryUrl}".`);
+    throw new TargetNotFound(`Could not read a repository out of "${label(info.repositoryUrl)}".`);
   }
   return {
     owner,
     name,
     requestedRef: "",
     registry: { kind: input.kind, packageName: info.name, version: info.version },
+    registryDoc,
   };
 }
 
@@ -488,13 +513,19 @@ async function provenanceFindings(
   f: Fetcher,
   target: TargetRef,
   notChecked: NotChecked[],
+  resolvedDoc: RegistryDoc | undefined,
 ): Promise<Finding[]> {
   const registry = target.registry;
   if (!registry) return [];
   const findings: Finding[] = [];
+  const carried =
+    resolvedDoc && resolvedDoc.kind === registry.kind && resolvedDoc.info.name === registry.packageName
+      ? resolvedDoc
+      : undefined;
 
   if (registry.kind === "npm") {
-    const info = await fetchNpm(f, registry.packageName);
+    const info =
+      carried?.kind === "npm" ? carried.info : await fetchNpm(f, registry.packageName);
     if (!info) return [];
 
     findings.push({
@@ -555,7 +586,8 @@ async function provenanceFindings(
       }
     }
   } else {
-    const info = await fetchPypi(f, registry.packageName);
+    const info =
+      carried?.kind === "pypi" ? carried.info : await fetchPypi(f, registry.packageName);
     if (!info) return [];
     findings.push({
       check: "registry-provenance",
