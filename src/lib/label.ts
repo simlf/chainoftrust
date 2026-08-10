@@ -44,6 +44,16 @@ export function label(raw: string): string {
   return `${clamped}${mark}`;
 }
 
+/**
+ * Render a list of target-chosen names, saying so when it was cut short.
+ *
+ * The statements these lists sit in usually state the full count beside them,
+ * so a silently truncated list makes the sentence disagree with the names a
+ * reader can count. The remainder is stated instead, which keeps the statement
+ * a verifiable fact whatever the display limit is.
+ */
 export function labelList(values: string[], max = 6): string {
-  return values.slice(0, max).map(label).join(", ");
+  const shown = values.slice(0, max).map(label).join(", ");
+  const hidden = values.length - max;
+  return hidden > 0 ? `${shown}, and ${hidden} more` : shown;
 }

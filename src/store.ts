@@ -14,6 +14,15 @@ export interface RateLimitResult {
 }
 
 /**
+ * How many spent analysis slots one address can be given back in a UTC day.
+ *
+ * Small on purpose. Every refund buys another full collection, so this is the
+ * only thing standing between a target that fails on every attempt and a replay
+ * across the whole submission ceiling.
+ */
+export const RELEASES_PER_DAY = 5;
+
+/**
  * D1 is the cache, the rate limiter and the budget ledger.
  *
  * Cache identity is the commit SHA, so a popular repository submitted a
@@ -185,11 +194,19 @@ export class Store {
   /**
    * Give back an analysis slot spent on work that produced no report.
    *
-   * It needs no cap of its own. The submission counter already charged for the
-   * upstream requests the attempt made, and that one is never given back, so a
-   * target that fails every time still runs out of submissions.
+   * The release path carries its own daily allowance, and the caller cannot opt
+   * out of it: refunding without a bound lets one address whose analyses always
+   * fail replay a full collection for every submission it has, which is the
+   * frugality ceiling this counter exists to hold. Past the allowance a failure
+   * simply costs the slot. The worst case per address per UTC day is therefore
+   * the analysis limit plus RELEASES_PER_DAY full collections.
    */
   async releaseRateLimit(ipHash: string): Promise<void> {
+    const releases = await this.bump(`release:${ipHash}`, utcDay());
+    // A release that could not be counted is not granted. Leaving the slot
+    // spent is the safe direction, the same one every other fault takes here.
+    if (releases === null || releases > RELEASES_PER_DAY) return;
+
     try {
       await this.db
         .prepare(
