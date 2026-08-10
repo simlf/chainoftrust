@@ -23,12 +23,14 @@ interface VerdictRow {
 function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; broken?: boolean } = {}) {
   const counters = new Map<string, number>();
   const verdicts: VerdictRow[] = [];
+  const prunes = { count: 0 };
   const returning = opts.returning ?? "row";
   const counterReadable = opts.counterReadable ?? true;
 
   const db = {
     counters,
     verdicts,
+    prunes,
     prepare(sql: string) {
       if (opts.broken) throw new Error("storage unavailable");
       const text = sql.replace(/\s+/g, " ").trim();
@@ -46,6 +48,7 @@ function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; b
             return;
           }
           if (text.startsWith("DELETE FROM rate_limits WHERE day <")) {
+            prunes.count++;
             for (const key of [...counters.keys()]) {
               if (key.split("|")[1]! < String(args[0])) counters.delete(key);
             }
@@ -159,6 +162,20 @@ describe("rate limiting", () => {
     expect(collections).toBe(analysesPerDay + RELEASES_PER_DAY);
     expect(collections).toBe(10);
     expect(collections).toBeLessThan(submissionsPerDay);
+  });
+
+  it("prunes stale counters once per counter rather than once per request", async () => {
+    // D1 bills rows read, so a prune on every bump makes each request cost the
+    // whole live table. It runs on the first bump of a counter and stale rows
+    // are still gone after it.
+    const db = fakeDb();
+    const store = new Store(db as never);
+    db.counters.set("ip|2000-01-01", 3);
+
+    for (let i = 0; i < 10; i++) await store.consumeRateLimit("ip", 100);
+
+    expect(db.counters.has("ip|2000-01-01")).toBe(false);
+    expect(db.prunes.count).toBe(1);
   });
 
   it("never releases below zero", async () => {

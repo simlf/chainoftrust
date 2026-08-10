@@ -135,10 +135,14 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
     }
   }
 
-  const prose = scanProse(
-    fetched.filter((file) => PROSE_CANDIDATES.includes(file.path)),
-  );
+  const prose = scanProse(fetched.filter((file) => PROSE_CANDIDATES.includes(file.path)), {
+    candidates: entries
+      .map((entry) => entry.path)
+      .filter((path) => PROSE_CANDIDATES.includes(path)),
+    complete: Boolean(tree) && !tree?.truncated,
+  });
   findings.push(...prose.findings);
+  notChecked.push(...prose.notChecked);
 
   findings.push(...(await provenanceFindings(f, target, notChecked)));
   findings.push(...(await trustRootFindings(f, owner, name, repo.meta)));

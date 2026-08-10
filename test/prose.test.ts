@@ -68,9 +68,35 @@ describe("prose collection", () => {
     expect(scan.findings).toEqual([]);
   });
 
-  it("says so when there was no prose to read at all", () => {
-    const scan = scanProse([]);
-    expect(scan.findings[0]!.statement).toMatch(/No README, security policy/);
+  it("states an absence only when the listing it was read from establishes one", () => {
+    const scan = scanProse([], { candidates: [], complete: true });
+    expect(scan.findings[0]!.concern).toBe("prose:absent");
+    expect(scan.findings[0]!.statement).toMatch(/names no README/);
+    expect(scan.notChecked).toEqual([]);
+  });
+
+  it("does not call a README absent when it was listed but never read", () => {
+    const scan = scanProse([], { candidates: ["README.md"], complete: true });
+    expect(scan.findings).toEqual([]);
+    expect(scan.notChecked).toHaveLength(1);
+    expect(scan.notChecked[0]!).toContain("README.md");
+    expect(scan.notChecked[0]!).toMatch(/did not read/);
+  });
+
+  it("names what was read and what was not when only some prose was reached", () => {
+    const scan = scanProse(
+      [{ path: "README.md", text: "A fast package installer. Install it and run it." }],
+      { candidates: ["README.md", "SECURITY.md"], complete: true },
+    );
+    expect(scan.findings).toEqual([]);
+    expect(scan.notChecked[0]!).toContain("README.md");
+    expect(scan.notChecked[0]!).toContain("SECURITY.md");
+  });
+
+  it("claims nothing about prose when the listing itself was not read", () => {
+    const scan = scanProse([], { candidates: [], complete: false });
+    expect(scan.findings).toEqual([]);
+    expect(scan.notChecked[0]!).toMatch(/cannot say whether the project has one/);
   });
 
   it("bounds how much of any one file it carries", () => {
