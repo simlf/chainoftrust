@@ -5,8 +5,16 @@ export interface NpmPackageInfo {
   version: string;
   /** npm Trusted Publishing leaves a SLSA provenance statement here. */
   hasAttestations: boolean;
-  /** `GitHub Actions <npm-oidc-no-reply@github.com>` means OIDC, not a PAT. */
-  publishedBy: string | null;
+  /**
+   * The publishing account, name and email kept apart.
+   *
+   * `GitHub Actions <npm-oidc-no-reply@github.com>` means OIDC, not a PAT.
+   * Both halves are target-chosen names that get clamped separately where they
+   * are stated: formatting them into one `name <email>` string first would make
+   * the clamp strip the angle brackets and the space, and the citation a reader
+   * is meant to match against registry.npmjs.org would arrive run together.
+   */
+  publishedBy: { name: string; email: string | null } | null;
   maintainers: string[];
   repositoryUrl: string | null;
   hasIntegrity: boolean;
@@ -54,7 +62,7 @@ export async function fetchNpm(
     name: doc.name,
     version: latest,
     hasAttestations: Boolean(v.dist?.attestations),
-    publishedBy: user?.name ? `${user.name} <${user.email ?? ""}>`.trim() : null,
+    publishedBy: user?.name ? { name: user.name, email: user.email ?? null } : null,
     maintainers: (doc.maintainers ?? []).map((m) => m.name),
     repositoryUrl: repoUrl(v.repository) ?? repoUrl(doc.repository),
     hasIntegrity: Boolean(v.dist?.integrity),

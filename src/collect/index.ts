@@ -539,14 +539,25 @@ async function provenanceFindings(
       method: "registry",
     });
 
-    const viaOidc = /github actions|npm-oidc-no-reply/i.test(info.publishedBy ?? "");
+    const publisher = info.publishedBy;
+    const viaOidc = /github actions|npm-oidc-no-reply/i.test(
+      publisher ? `${publisher.name} ${publisher.email ?? ""}` : "",
+    );
+    // Name and email are clamped separately so the citation reads the way
+    // registry.npmjs.org spells it. label() drops the space and the angle
+    // brackets, so one combined name would always render run together.
+    const publisherCitation = !publisher
+      ? "an account the registry does not name"
+      : publisher.email
+        ? `${label(publisher.name)} <${label(publisher.email)}>`
+        : label(publisher.name);
     findings.push({
       check: "registry-provenance",
       severity: viaOidc ? "clean" : "note",
       concern: "registry-provenance:publisher",
       statement: viaOidc
         ? `The package was published by CI over OIDC rather than with a long-lived personal token.`
-        : `The package was published by ${info.publishedBy ? label(info.publishedBy) : "an account the registry does not name"}, which indicates a long-lived publish token rather than CI over OIDC.`,
+        : `The package was published by ${publisherCitation}, which indicates a long-lived publish token rather than CI over OIDC.`,
       evidence: `registry.npmjs.org/${label(info.name)} _npmUser`,
       method: "registry",
     });

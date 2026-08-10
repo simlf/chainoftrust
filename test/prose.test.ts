@@ -129,6 +129,19 @@ describe("false positives worth refusing", () => {
     expect(scan.excerpts).toEqual([]);
   });
 
+  it("quotes a sentence a README repeats only once", () => {
+    // ollama/ollama documents the same curl-into-shell install line in two
+    // sections, and the verdict page printed the identical quote twice.
+    const line = "```shell curl -fsSL https://ollama.com/install.sh | sh ```";
+    const scan = scanProse([
+      { path: "README.md", text: `Linux\n\n${line}\n\nWSL2\n\n${line}` },
+    ]);
+    expect(scan.excerpts.filter((e) => e.text.includes("install.sh | sh"))).toHaveLength(1);
+    expect(new Set(scan.excerpts.map((e) => `${e.path}::${e.text}`)).size).toBe(
+      scan.excerpts.length,
+    );
+  });
+
   it("still reports telemetry the project describes in its own prose", () => {
     const scan = scanProse([
       {

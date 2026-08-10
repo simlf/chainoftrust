@@ -56,7 +56,7 @@ function fakeFetcher(maintainers: string[]) {
   };
 }
 
-async function publishRightsStatement(maintainers: string[]): Promise<string> {
+async function statementFor(concern: string, maintainers: string[]): Promise<string> {
   const registry: RegistryRef = {
     kind: "npm",
     packageName: "@example/sdk",
@@ -76,9 +76,13 @@ async function publishRightsStatement(maintainers: string[]): Promise<string> {
     meta,
   });
 
-  const finding = evidence.findings.find((f) => f.concern === "trust-root:publish-rights");
-  expect(finding, "the publish-rights finding was produced").toBeDefined();
+  const finding = evidence.findings.find((f) => f.concern === concern);
+  expect(finding, `the ${concern} finding was produced`).toBeDefined();
   return finding!.statement;
+}
+
+function publishRightsStatement(maintainers: string[]): Promise<string> {
+  return statementFor("trust-root:publish-rights", maintainers);
 }
 
 /** Names as the statement renders them, plus whatever remainder it declares. */
@@ -90,6 +94,21 @@ function accountedFor(statement: string): { stated: number; listed: number } {
   const named = more ? parts.length - 1 : parts.length;
   return { stated, listed: named + (more ? Number(more[1]) : 0) };
 }
+
+describe("how the publishing account is cited", () => {
+  /**
+   * The clamp runs on the name and on the email separately. Formatting them
+   * into one `name <email>` string first made the clamp strip the space and the
+   * brackets, so every npm target read "publisherp@example.com (name rewritten
+   * to render)" and no reader could match that against registry.npmjs.org.
+   */
+  it("spells the account the way the registry spells it", async () => {
+    const statement = await statementFor("registry-provenance:publisher", ["publisher"]);
+
+    expect(statement).toContain("published by publisher <p@example.com>");
+    expect(statement).not.toContain("rewritten");
+  });
+});
 
 describe("who can publish an npm package", () => {
   it("accounts for every maintainer it counted when the list is cut short", async () => {
