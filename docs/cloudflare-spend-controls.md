@@ -75,7 +75,9 @@ guarantee.
 - 5 fresh analyses per IP per UTC day, charged only when an analysis really
   runs. Reading an existing verdict at its own address is unlimited.
 - 100 submissions per IP per UTC day. Resolving a submission always reaches
-  GitHub or a registry, so that is what this counter bounds.
+  GitHub or a registry, so that is what this counter bounds, cached or not. The
+  draft's "cache hits unlimited and exempt" narrows to this: a cache hit costs no
+  analysis, and reading a verdict URL costs nothing at all.
 - The egress allowlist in `src/lib/fetcher.ts` means a hostile repository
   cannot make the Worker fetch anything it did not choose to fetch.
 

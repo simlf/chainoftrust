@@ -15,22 +15,33 @@
  * passes through unchanged. Verbatim target text belongs in a finding's quote,
  * which travels inside the nonce fence.
  *
- * A name that had to be changed is marked. The publication rule is a verifiable
- * fact with a citation, and a silently shortened path is neither: a reader
- * would go looking for a file that is not there.
+ * A name that had to be changed is marked, and the marker says whether it was
+ * shortened, rewritten, or both. The publication rule is a verifiable fact with
+ * a citation, and a silently altered path is neither: a reader would go looking
+ * for a file that is not there under either spelling.
  */
 const MAX_LABEL = 160;
 
 /** The characters a path, a package name and a PEP 440 version need. */
 const SAFE = /[^A-Za-z0-9._@/:+!~-]/g;
 
-const CLAMPED_MARK = " (name shortened)";
-
 export function label(raw: string): string {
   const safe = raw.replace(/\s+/g, "").replace(SAFE, "");
   const clamped = safe.slice(0, MAX_LABEL);
   if (!clamped) return "(a name this report cannot render)";
-  return clamped === raw ? clamped : `${clamped}${CLAMPED_MARK}`;
+  if (clamped === raw) return clamped;
+
+  // The marker says which of the two things happened, because a reader who
+  // follows the citation needs to know whether the real name is longer than
+  // this one or spelled differently from it.
+  const rewritten = safe !== raw;
+  const shortened = safe.length > MAX_LABEL;
+  const mark = shortened
+    ? rewritten
+      ? " (name rewritten to render, and shortened)"
+      : " (name shortened)"
+    : " (name rewritten to render)";
+  return `${clamped}${mark}`;
 }
 
 export function labelList(values: string[], max = 6): string {

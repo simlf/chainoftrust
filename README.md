@@ -112,6 +112,12 @@ What this repository does instead:
   counter that bounds the upstream work one address can drive, whether or not
   the report turns out to be cached. It is never given back.
 
+The draft's rule was "cache hits unlimited and exempt". This narrows it rather
+than discarding it: the draft was written before the resolution step existed, and
+resolving a submission has to reach GitHub or a registry to learn which commit is
+being asked about, which is real work done on someone else's behalf. So the free
+and unlimited half now lives where it is literally true, on the verdict URLs.
+
 The default budget of 300 cents/month is deliberately below the draft's 30 EUR
 envelope. Raise the variable to spend more.
 
@@ -121,7 +127,7 @@ envelope. Raise the variable to spend more.
 |---|---|---|
 | `MODEL_BUDGET_CENTS_PER_MONTH` | `300` | Hard ceiling on model spend per UTC month |
 | `MODEL_ID` | `claude-haiku-4-5` | Small model for the write-up |
-| `FRESH_ANALYSES_PER_IP_PER_DAY` | `5` | Cache hits are exempt |
+| `FRESH_ANALYSES_PER_IP_PER_DAY` | `5` | A cache hit costs none of these |
 | `CONTACT_EMAIL` | | Shown in the footer for corrections |
 
 Secrets: `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `RATE_LIMIT_SALT`. All optional;
