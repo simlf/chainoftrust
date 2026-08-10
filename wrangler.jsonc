@@ -1,0 +1,62 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chainoftrust",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  // Required by @anthropic-ai/sdk, whose credential-resolution code imports
+  // node:path and node:fs. Neither is reachable on the one code path we use.
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Denial-of-wallet guards. Both are per-invocation ceilings, well below the
+  // platform defaults (30s CPU, 10k subrequests on Workers Paid). They bound a
+  // runaway analysis; they do not bound a monthly bill. See
+  // docs/cloudflare-spend-controls.md for what Cloudflare can and cannot cap.
+  "limits": {
+    "cpu_ms": 10000,
+    "subrequests": 60
+  },
+
+  "observability": {
+    "enabled": true
+  },
+
+  "vars": {
+    // Monthly ceiling on model spend, in US cents. When the running total for
+    // the current UTC month reaches this, the write-up is skipped and the
+    // deterministic verdict is served without prose. Never refuses service.
+    "MODEL_BUDGET_CENTS_PER_MONTH": "300",
+
+    // Small model for the write-up. The findings come from the deterministic
+    // collectors; the model only weighs and explains them.
+    "MODEL_ID": "claude-haiku-4-5",
+
+    // Fresh analyses per IP per UTC day. A cache hit never counts against this,
+    // though it still spends one of the separate daily submission units. Only
+    // the GET verdict URLs are unlimited. See README, "Cost controls".
+    "FRESH_ANALYSES_PER_IP_PER_DAY": "5",
+
+    "CONTACT_EMAIL": "contact@chainoftrust.dev"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "chainoftrust",
+      // Replace with the id printed by `wrangler d1 create chainoftrust`.
+      // This is the only value that cannot be committed ahead of time.
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+
+  // Secrets, set with `wrangler secret put <NAME>`, never committed:
+  //   ANTHROPIC_API_KEY  - required for the write-up. Absent means every
+  //                        verdict degrades to deterministic-only, which is a
+  //                        supported mode, not an outage.
+  //   GITHUB_TOKEN       - optional. Raises the GitHub API rate limit from 60
+  //                        to 5000 requests/hour. Use a token with no scopes.
+  //   RATE_LIMIT_SALT    - optional. Salts the rate limiter's IP digests.
+  //                        Absent, they are salted with the UTC day alone,
+  //                        which rotates them daily but leaves them
+  //                        enumerable by anyone who can read the table.
+}

@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      # The suite makes no network calls: the collectors are pure functions
+      # over text, and the fetcher's tests stub globalThis.fetch.
+      - run: npm test
+      - name: Build the Worker
+        run: npx wrangler deploy --dry-run --outdir=dist
