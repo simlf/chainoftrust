@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cacheKeyFor } from "../src/lib/target";
-import { hashIp, Store } from "../src/store";
+import { hashIp, RELEASES_PER_DAY, Store } from "../src/store";
 import type { Report } from "../src/types";
 import { verdictPath } from "../src/ui/pages";
 
@@ -134,6 +134,31 @@ describe("rate limiting", () => {
 
     expect(db.counters.get(`ip|${today}`)).toBe(0);
     expect(await store.consumeRateLimit("ip", 5)).toMatchObject({ used: 1, allowed: true });
+  });
+
+  it("bounds the full collections one failing address can drive in a day", async () => {
+    // The worst case stated as arithmetic: an address whose analysis fails every
+    // single time. Each failure refunds its slot, so without a cap on the
+    // release path the 100 daily submissions each buy a full collection and its
+    // whole fetch budget. The bound is the analysis limit plus the releases
+    // allowed, and nothing the caller does can widen it.
+    const analysesPerDay = 5;
+    const submissionsPerDay = 100;
+    const db = fakeDb();
+    const store = new Store(db as never);
+
+    let collections = 0;
+    for (let i = 0; i < submissionsPerDay; i++) {
+      if (!(await store.consumeSubmission("ip", submissionsPerDay)).allowed) break;
+      if (!(await store.consumeRateLimit("ip", analysesPerDay)).allowed) continue;
+      collections++;
+      // Every analysis fails after the cache miss.
+      await store.releaseRateLimit("ip");
+    }
+
+    expect(collections).toBe(analysesPerDay + RELEASES_PER_DAY);
+    expect(collections).toBe(10);
+    expect(collections).toBeLessThan(submissionsPerDay);
   });
 
   it("never releases below zero", async () => {

@@ -144,9 +144,9 @@ async function handleAnalyse(
     await store.putVerdict(report, summary.text, summary.model);
     return redirect(verdictPath(report));
   } catch (err) {
-    // The analysis produced nothing, so the slot goes back. The submission unit
-    // it spent does not, which is what stops a target that fails every time
-    // from being replayed for free.
+    // The analysis produced nothing, so the slot goes back, up to the daily
+    // allowance the release path enforces itself. Past that a failure costs the
+    // slot, which is what bounds a target that fails on every attempt.
     await store.releaseRateLimit(ipHash);
     throw err;
   }
