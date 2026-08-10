@@ -73,7 +73,11 @@ guarantee.
 - Cache by commit SHA: a repository submitted a thousand times costs one
   analysis, and a cache hit never reaches the model.
 - 5 fresh analyses per IP per UTC day, charged only when an analysis really
-  runs. Reading an existing verdict at its own address is unlimited.
+  runs. Reading an existing verdict at its own address is unlimited. An analysis
+  that fails before storing a report gives its slot back, but only 5 times per
+  address per day (`RELEASES_PER_DAY` in `src/store.ts`), so the worst case an
+  address can drive is 10 full collections per UTC day rather than one per
+  submission.
 - 100 submissions per IP per UTC day. Resolving a submission always reaches
   GitHub or a registry, so that is what this counter bounds, cached or not. The
   draft's "cache hits unlimited and exempt" narrows to this: a cache hit costs no
