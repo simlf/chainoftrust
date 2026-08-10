@@ -106,7 +106,8 @@ What this repository does instead:
   never costs an analysis. Reading an existing verdict at its own address costs
   nothing at all: those URLs do no upstream work and are not rate limited.
 - 5 fresh analyses per IP per UTC day. An analysis that fails before a report is
-  stored gives its slot back.
+  stored gives its slot back, up to a daily refund allowance. Past that a
+  failure costs the slot.
 - 100 submissions per IP per UTC day. Every submission to the form resolves its
   target at GitHub or a registry before anything else happens, so that is the
   counter that bounds the upstream work one address can drive, whether or not
@@ -145,6 +146,10 @@ GET /r/github/:owner/:name            latest report for a repository
 GET /r/github/:owner/:name/:sha       report pinned to a commit
 GET /api/v1/verdict/github/:owner/:name[/:sha]     same, as JSON
 ```
+
+A report on an npm or PyPI package carries a `?pkg=npm:name@version` (or
+`pypi:`) qualifier on its pinned URL, because one commit can back several
+published packages.
 
 Add `?format=json` to any report URL. JSON responses are CORS-open and cached
 for an hour. Reports are generated on submission from the site, not on demand
