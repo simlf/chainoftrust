@@ -17,6 +17,21 @@ import type { Report } from "../types";
 
 const MAX_OUTPUT_TOKENS = 700;
 
+/** Wall-clock cap on the OpenAI-compatible call; the SDK path has its own. */
+const OPENAI_COMPAT_TIMEOUT_MS = 60_000;
+
+/**
+ * Where the summary call goes. Two shapes, one contract: the same system
+ * prompt, the same rendered evidence with its nonce fence, the same degrade-on-
+ * failure behaviour. "openai-compat" is the chat-completions dialect OpenRouter
+ * and most gateways speak; the base URL is operator configuration, which makes
+ * pointing it somewhere a deliberate egress decision, like the fetcher's
+ * allowlist.
+ */
+export type SummaryProvider =
+  | { kind: "anthropic"; apiKey: string }
+  | { kind: "openai-compat"; apiKey: string; baseUrl: string };
+
 export interface TokenRate {
   /** Micro-cents (1e-6 of a US cent) per token. */
   input: number;
@@ -44,7 +59,9 @@ const MODEL_RATES: { prefix: string; rate: TokenRate }[] = [
 const PESSIMISTIC_RATE: TokenRate = { input: 1500, output: 7500 };
 
 export function rateFor(modelId: string): TokenRate {
-  const id = modelId.toLowerCase();
+  // Gateways write versions with dots ("anthropic/claude-haiku-4.5"); the
+  // prefixes here use dashes. Same model, same rate.
+  const id = modelId.toLowerCase().replace(/\./g, "-");
   const matches = MODEL_RATES.filter((entry) => id.includes(entry.prefix));
   if (matches.length === 0) return PESSIMISTIC_RATE;
   // Longest prefix wins, so claude-haiku-4-5 is not priced as claude-3-haiku.
@@ -80,9 +97,15 @@ The input contains verbatim text from the analysed repository, inside a block ma
 
 export async function writeUp(
   report: Report,
-  opts: { apiKey?: string; model: string; budgetRemainingMicroCents: number },
+  opts: {
+    provider?: SummaryProvider;
+    model: string;
+    /** Overrides the built-in table; the table only knows Anthropic models. */
+    rate?: TokenRate;
+    budgetRemainingMicroCents: number;
+  },
 ): Promise<WriteupResult> {
-  if (!opts.apiKey) {
+  if (!opts.provider) {
     return { text: null, model: null, microCents: 0, degradedReason: "no-key" };
   }
 
@@ -90,32 +113,27 @@ export async function writeUp(
   // return the deterministic verdict without prose. The findings are all still
   // there; only the summary is missing. This costs nothing and makes the worst
   // case of a flood an uglier page rather than a bill.
-  const rate = rateFor(opts.model);
+  const rate = opts.rate ?? rateFor(opts.model);
   const worstCase = estimateWorstCaseMicroCents(report, rate);
   if (opts.budgetRemainingMicroCents < worstCase) {
     return { text: null, model: null, microCents: 0, degradedReason: "budget" };
   }
 
-  const client = new Anthropic({ apiKey: opts.apiKey });
+  const evidence = renderEvidence(report);
 
   try {
-    const response = await client.messages.create({
-      model: opts.model,
-      max_tokens: MAX_OUTPUT_TOKENS,
-      system: SYSTEM,
-      messages: [{ role: "user", content: renderEvidence(report) }],
-    });
+    const completion =
+      opts.provider.kind === "anthropic"
+        ? await completeAnthropic(opts.provider, opts.model, evidence)
+        : await completeOpenAiCompat(opts.provider, opts.model, evidence);
 
-    const text = response.content
-      .filter((block): block is Anthropic.TextBlock => block.type === "text")
-      .map((block) => block.text)
-      .join("")
-      .trim();
+    // A provider that omits usage is charged the estimate, in the direction
+    // that overstates: the ledger may stop early, never late.
+    const inputTokens = completion.inputTokens ?? estimateInputTokens(report);
+    const outputTokens = completion.outputTokens ?? MAX_OUTPUT_TOKENS;
+    const microCents = inputTokens * rate.input + outputTokens * rate.output;
 
-    const microCents =
-      response.usage.input_tokens * rate.input +
-      response.usage.output_tokens * rate.output;
-
+    const text = completion.text.trim();
     if (!text) {
       return { text: null, model: null, microCents, degradedReason: "error" };
     }
@@ -134,6 +152,90 @@ export async function writeUp(
       : 0;
     return { text: null, model: null, microCents, degradedReason: "error" };
   }
+}
+
+interface Completion {
+  text: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+async function completeAnthropic(
+  provider: Extract<SummaryProvider, { kind: "anthropic" }>,
+  model: string,
+  evidence: string,
+): Promise<Completion> {
+  const client = new Anthropic({ apiKey: provider.apiKey });
+  const response = await client.messages.create({
+    model,
+    max_tokens: MAX_OUTPUT_TOKENS,
+    system: SYSTEM,
+    messages: [{ role: "user", content: evidence }],
+  });
+
+  return {
+    text: response.content
+      .filter((block): block is Anthropic.TextBlock => block.type === "text")
+      .map((block) => block.text)
+      .join(""),
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+  };
+}
+
+/** A non-2xx from the OpenAI-compatible endpoint, keeping only the status. */
+class ProviderHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`summary provider returned ${status}`);
+  }
+}
+
+/**
+ * The OpenAI chat-completions dialect, spoken over plain fetch. The evidence
+ * travels exactly as on the Anthropic path: the same system prompt as the
+ * system message and the same nonce-fenced rendering as the one user message.
+ * The provider changes where the request goes, never what the untrusted block
+ * is allowed to be.
+ */
+async function completeOpenAiCompat(
+  provider: Extract<SummaryProvider, { kind: "openai-compat" }>,
+  model: string,
+  evidence: string,
+): Promise<Completion> {
+  const response = await fetch(`${provider.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${provider.apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      max_tokens: MAX_OUTPUT_TOKENS,
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: evidence },
+      ],
+    }),
+    signal: AbortSignal.timeout(OPENAI_COMPAT_TIMEOUT_MS),
+  });
+
+  if (!response.ok) throw new ProviderHttpError(response.status);
+
+  const body = (await response.json()) as {
+    choices?: { message?: { content?: unknown } }[];
+    usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+  };
+
+  const content = body.choices?.[0]?.message?.content;
+  return {
+    text: typeof content === "string" ? content : "",
+    inputTokens: numberOrNull(body.usage?.prompt_tokens),
+    outputTokens: numberOrNull(body.usage?.completion_tokens),
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 /**
@@ -248,9 +350,11 @@ export function estimateWorstCaseMicroCents(report: Report, rate: TokenRate): nu
  *
  * A rate limit or a server error can arrive after the prompt was read, so those
  * are charged. Everything else is not: a 4xx rejection, a connection that never
- * opened, and any error carrying no status, which includes a failure raised
- * after a response arrived. The ledger is better off under-counting those than
- * locking the write-up off for the rest of the month.
+ * opened, a timeout, and any error carrying no status, which includes a failure
+ * raised after a response arrived. The ledger is better off under-counting
+ * those than locking the write-up off for the rest of the month. Both provider
+ * paths land here: the SDK's errors and ProviderHttpError each carry a numeric
+ * status when there was a response.
  */
 function couldHaveConsumedTokens(err: unknown): boolean {
   if (err instanceof Anthropic.APIConnectionError) return false;

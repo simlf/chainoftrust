@@ -70,6 +70,12 @@ describe("token rates behind the monthly ceiling", () => {
   it("does not read claude-haiku-4-5 as the older, cheaper haiku", () => {
     expect(rateFor("claude-haiku-4-5").input).toBeGreaterThan(rateFor("claude-3-haiku").input);
   });
+
+  it("prices a gateway spelling of a known model at that model's rate", () => {
+    // OpenRouter writes versions with dots and prefixes the vendor.
+    expect(rateFor("anthropic/claude-haiku-4.5")).toEqual(rateFor("claude-haiku-4-5"));
+    expect(rateFor("meta-llama/llama-3.1-8b-instruct")).toEqual(rateFor("claude-opus-5"));
+  });
 });
 
 describe("the budget guard", () => {
@@ -86,7 +92,7 @@ describe("the budget guard", () => {
     vi.stubGlobal("fetch", fetchSpy);
 
     const result = await writeUp(report, {
-      apiKey: "test-key",
+      provider: { kind: "anthropic", apiKey: "test-key" },
       model: "claude-haiku-4-5",
       budgetRemainingMicroCents: 1,
     });
@@ -102,7 +108,7 @@ describe("the budget guard", () => {
 
   const attempt = () =>
     writeUp(report, {
-      apiKey: "test-key",
+      provider: { kind: "anthropic", apiKey: "test-key" },
       model: "claude-haiku-4-5",
       budgetRemainingMicroCents: 1_000_000_000,
     });

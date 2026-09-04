@@ -27,8 +27,22 @@
     "MODEL_BUDGET_CENTS_PER_MONTH": "300",
 
     // Small model for the write-up. The findings come from the deterministic
-    // collectors; the model only weighs and explains them.
+    // collectors; the model only weighs and explains them. With an
+    // OPENROUTER_API_KEY set this must be an OpenRouter model id (for example
+    // "anthropic/claude-haiku-4.5"); with only an ANTHROPIC_API_KEY it is an
+    // Anthropic model id. Switching models is a config change, not a deploy.
     "MODEL_ID": "claude-haiku-4-5",
+
+    // Optional companions to MODEL_ID, absent by default:
+    //   OPENROUTER_BASE_URL     - where the OpenAI-compatible summary call
+    //                             goes when OPENROUTER_API_KEY is set. Defaults
+    //                             to https://openrouter.ai/api/v1. Pointing it
+    //                             elsewhere is an egress decision.
+    //   MODEL_RATE_MICRO_CENTS  - "input,output" token rate in micro-cents for
+    //                             the budget guard. The built-in table only
+    //                             knows Anthropic models and prices anything
+    //                             else pessimistically, so set this when
+    //                             MODEL_ID names a model it does not know.
 
     // Fresh analyses per IP per UTC day. A cache hit never counts against this,
     // though it still spends one of the separate daily submission units. Only
@@ -50,9 +64,14 @@
   ]
 
   // Secrets, set with `wrangler secret put <NAME>`, never committed:
-  //   ANTHROPIC_API_KEY  - required for the write-up. Absent means every
-  //                        verdict degrades to deterministic-only, which is a
-  //                        supported mode, not an outage.
+  //   OPENROUTER_API_KEY - enables the write-up via OpenRouter (or any
+  //                        OpenAI-compatible endpoint named by
+  //                        OPENROUTER_BASE_URL). Wins over ANTHROPIC_API_KEY
+  //                        when both are set.
+  //   ANTHROPIC_API_KEY  - enables the write-up via the Anthropic API. With
+  //                        neither key every verdict degrades to
+  //                        deterministic-only, which is a supported mode, not
+  //                        an outage.
   //   GITHUB_TOKEN       - optional. Raises the GitHub API rate limit from 60
   //                        to 5000 requests/hour. Use a token with no scopes.
   //   RATE_LIMIT_SALT    - optional. Salts the rate limiter's IP digests.
