@@ -26,7 +26,10 @@ hazard structurally unreachable.
 Repository prose does reach the model, deliberately. It goes inside a
 nonce-fenced untrusted block with envelope-imitating text flattened
 (`src/verdict/writeup.ts`). Any change there needs `test/verdict.test.ts` to
-still pass.
+still pass. The summary provider is configuration (`src/env.ts`: an OpenRouter
+key wins, then Anthropic, else degraded mode), and the isolation guarantees
+hold on every provider path: `test/provider.test.ts` proves them on the
+OpenAI-compatible wire shape, so a new provider needs the same proof.
 
 ## Two calibration traps, both found by running against real repositories
 

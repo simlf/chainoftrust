@@ -61,9 +61,22 @@ npm run db:migrate:local
 npm run dev                               # http://localhost:8787
 ```
 
-Works with no secrets. Without `ANTHROPIC_API_KEY` every report is served in
-degraded mode: the deterministic verdict and all findings, no written summary.
-That is a supported mode, not an outage.
+Works with no secrets. The written summary at the top of a report runs in one
+of three modes, selected by which API key is configured:
+
+| Mode | Selected by | Summary call |
+|---|---|---|
+| **openrouter** | `OPENROUTER_API_KEY` set (wins when both are) | OpenAI-compatible chat completions, to `OPENROUTER_BASE_URL` (default OpenRouter), with `MODEL_ID` as the OpenRouter model id |
+| **anthropic** | only `ANTHROPIC_API_KEY` set | Anthropic Messages API, with `MODEL_ID` as the Anthropic model id |
+| **none** | neither key set | No call. Deterministic verdict and all findings, no written summary |
+
+The **none** row is degraded mode: a supported mode, not an outage. A provider
+error or timeout degrades that one report the same way rather than failing it.
+Whatever the provider, the model only weighs findings the deterministic
+collectors established, and repository prose reaches it only inside the
+nonce-fenced untrusted block described above. Summary cost is per fresh
+report and model-dependent: an evidence bundle is roughly 1k-5k tokens, so
+price it at your chosen model's rate.
 
 ```bash
 npm test          # the whole suite runs offline, no network
@@ -78,7 +91,8 @@ there are no dashboard steps.
 ```bash
 npx wrangler d1 create chainoftrust       # one time; paste the id in
 npm run db:migrate:remote
-npx wrangler secret put ANTHROPIC_API_KEY # optional, enables the write-up
+npx wrangler secret put OPENROUTER_API_KEY # optional, enables the write-up via OpenRouter
+npx wrangler secret put ANTHROPIC_API_KEY # optional, enables the write-up via Anthropic
 npx wrangler secret put GITHUB_TOKEN      # optional, raises the API rate limit
 npx wrangler secret put RATE_LIMIT_SALT   # optional, salts the stored IP digests
 npm run deploy
@@ -127,11 +141,14 @@ envelope. Raise the variable to spend more.
 | Variable | Default | Meaning |
 |---|---|---|
 | `MODEL_BUDGET_CENTS_PER_MONTH` | `300` | Hard ceiling on model spend per UTC month |
-| `MODEL_ID` | `claude-haiku-4-5` | Small model for the write-up |
+| `MODEL_ID` | `claude-haiku-4-5` | Small model for the write-up, in the selected provider's id scheme (OpenRouter: `anthropic/claude-haiku-4.5` and friends) |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Where the OpenAI-compatible call goes; only read in openrouter mode. Pointing it elsewhere is an egress decision |
+| `MODEL_RATE_MICRO_CENTS` | | `input,output` token rate in micro-cents for the budget guard. The built-in table only knows Anthropic models and prices anything else at its most expensive rate, so set this when `MODEL_ID` names anything else |
 | `FRESH_ANALYSES_PER_IP_PER_DAY` | `5` | A cache hit costs none of these |
 | `CONTACT_EMAIL` | | Shown in the footer for corrections |
 
-Secrets: `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`, `RATE_LIMIT_SALT`. All optional;
+Secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`,
+`RATE_LIMIT_SALT`. All optional;
 absent degrades behaviour rather than breaking it. Without `RATE_LIMIT_SALT`
 the rate limiter's IP digests are salted with the UTC day alone, which rotates
 them daily but leaves them enumerable by anyone who can read the table.
@@ -169,7 +186,9 @@ is the argument, not just the implementation.
 tier as deterministic collectors plus a small model for the write-up, and the
 validation measured evidence bundles at 560 to 4,500 tokens. The model never
 discovers anything; it weighs and explains findings the collectors already
-established. `MODEL_ID` is a variable, so trading up is a config change.
+established. `MODEL_ID` is a variable and the provider behind it is selected by
+which key is set, so trading up, down or sideways is a config change, not a
+deploy of new code.
 
 **Verdict tiers are arithmetic over distinct concerns.** Not per finding: a
 project shipping `install.sh` and `install.ps1` states the same defect twice,
