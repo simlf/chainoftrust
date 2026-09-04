@@ -135,8 +135,9 @@ async function handleAnalyse(
 
     const remaining = await store.budgetRemainingMicroCents(config.budgetCents);
     const summary = await writeUp(report, {
-      ...(config.apiKey ? { apiKey: config.apiKey } : {}),
+      ...(config.provider ? { provider: config.provider } : {}),
       model: config.modelId,
+      ...(config.modelRate ? { rate: config.modelRate } : {}),
       budgetRemainingMicroCents: remaining,
     });
     await store.recordSpend(summary.microCents);
