@@ -112,7 +112,16 @@ export interface ProseListing {
   complete: boolean;
 }
 
-/** Files worth reading in full, in priority order. Fetching is capped upstream. */
+/**
+ * Files worth reading in full, in priority order. Fetching is capped upstream.
+ *
+ * CLAUDE.md and AGENTS.md are listed at both the repository root and nested
+ * under .claude/, the project's Claude Code config directory: strudel-claude
+ * kept its persona/instruction file at .claude/CLAUDE.md instead of root, and
+ * this exact-match list missed it (agent-config.ts's presence check is a
+ * regex and already covers any depth; this list is not, so each real location
+ * needs its own entry).
+ */
 export const PROSE_CANDIDATES = [
   "SECURITY.md",
   "README.md",
@@ -121,6 +130,8 @@ export const PROSE_CANDIDATES = [
   "CONTRIBUTING.md",
   "CLAUDE.md",
   "AGENTS.md",
+  ".claude/CLAUDE.md",
+  ".claude/AGENTS.md",
   "readme.md",
   "Readme.md",
   "README.rst",

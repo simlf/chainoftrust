@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scanProse } from "../src/collect/prose";
+import { PROSE_CANDIDATES, scanProse } from "../src/collect/prose";
 
 /**
  * Binding adjustment 4: several of the highest-value findings in the validation
@@ -111,6 +111,27 @@ describe("prose collection", () => {
     ]);
     expect(scan.excerpts.length).toBeLessThanOrEqual(4);
     for (const e of scan.excerpts) expect(e.text.length).toBeLessThanOrEqual(320);
+  });
+});
+
+describe("nested agent instruction files", () => {
+  // strudel-claude keeps its persona/instruction file at .claude/CLAUDE.md,
+  // not at the repository root; both nested candidates are exact-match
+  // entries because this list, unlike agent-config.ts's presence regex, does
+  // not match on depth.
+  it("lists the .claude/-nested CLAUDE.md and AGENTS.md locations as candidates", () => {
+    expect(PROSE_CANDIDATES).toContain(".claude/CLAUDE.md");
+    expect(PROSE_CANDIDATES).toContain(".claude/AGENTS.md");
+  });
+
+  it("reads and searches a nested CLAUDE.md the same as a root one", () => {
+    const scan = scanProse([
+      {
+        path: ".claude/CLAUDE.md",
+        text: "This persona is unmaintained and no longer maintained by the original author.",
+      },
+    ]);
+    expect(scan.findings.some((f) => f.evidence.includes(".claude/CLAUDE.md"))).toBe(true);
   });
 });
 
