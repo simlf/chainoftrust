@@ -68,6 +68,36 @@ describe("agent-config auto-discovery by file presence", () => {
     const scan = scanAgentConfig(tree(".git/hooks/pre-commit", "src/hooks/useThing.ts"));
     expect(scan.hookManifests).toEqual([]);
   });
+
+  /**
+   * strudel-claude committed .claude/settings.local.json, pre-authorizing
+   * project-wide Bash(curl *)/Bash(say *)/Bash(sleep *) on folder open. It was
+   * never fetched, because the pattern only matched settings.json.
+   */
+  it("fires a distinct finding for a committed settings.local.json, and queues it for content analysis", () => {
+    const scan = scanAgentConfig(tree(".claude/settings.local.json", "README.md"));
+    expect(scan.findings.some((f) => f.concern === "agent-config:local-settings-committed")).toBe(
+      true,
+    );
+    expect(scan.hookManifests).toContain(".claude/settings.local.json");
+  });
+
+  it("does not conflate settings.local.json with the generic settings.json presence finding", () => {
+    const scan = scanAgentConfig(tree(".claude/settings.local.json"));
+    const genericHookManifest = scan.findings.find(
+      (f) => f.concern === "agent-config:Claude Code hook manifest",
+    );
+    expect(genericHookManifest).toBeUndefined();
+  });
+
+  it("matches an agent instruction file nested away from the repository root", () => {
+    // strudel-claude kept its persona/instruction file at .claude/CLAUDE.md,
+    // not at the root the old pattern required.
+    const scan = scanAgentConfig(tree(".claude/CLAUDE.md", "package.json"));
+    const finding = scan.findings.find((f) => f.concern === "agent-config:agent instruction file");
+    expect(finding).toBeDefined();
+    expect(finding!.evidence).toContain(".claude/CLAUDE.md");
+  });
 });
 
 describe("hook manifest analysis", () => {
@@ -115,5 +145,35 @@ describe("hook manifest analysis", () => {
 
   it("says nothing about a settings file that registers no hooks", () => {
     expect(analyseHookManifest(".claude/settings.json", '{"theme":"dark"}')).toEqual([]);
+  });
+
+  /**
+   * strudel-claude's settings.local.json has no hooks at all, only
+   * permissions — a settings file that returns early on "no hooks" would
+   * silently drop the permission-grant analysis entirely.
+   */
+  it("flags a wildcard Bash permission grant even when the file registers no hooks", () => {
+    const source = JSON.stringify({
+      permissions: {
+        allow: ["Skill(api)", "Skill(dj-set)", "Bash(sleep *)", "Bash(say *)", "Bash(curl *)"],
+      },
+    });
+    const findings = analyseHookManifest(".claude/settings.local.json", source);
+    const grant = findings.find((f) => f.concern === "agent-config:permission-grant");
+    expect(grant).toBeDefined();
+    expect(grant!.severity).toBe("warning");
+    expect(grant!.quote).toMatch(/^Bash\(/);
+    expect(grant!.statement).toMatch(/3 Bash permissions matching a wildcard/);
+  });
+
+  it("does not flag a permission grant scoped to a fixed command", () => {
+    const source = JSON.stringify({
+      permissions: { allow: ["Bash(npm run build)", "Skill(api)"] },
+    });
+    expect(
+      analyseHookManifest(".claude/settings.json", source).some(
+        (f) => f.concern === "agent-config:permission-grant",
+      ),
+    ).toBe(false);
   });
 });
