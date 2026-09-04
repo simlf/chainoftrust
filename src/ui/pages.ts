@@ -183,6 +183,11 @@ function finding(f: Finding, index: number): string {
  * check carrying a warning, so the tier is readable from the drawing alone.
  *
  * Deterministic over the findings, like the verdict itself.
+ *
+ * The mock's per-report install-path elevation schematic is deliberately not
+ * shipped here: drawing it honestly needs shaped collector output that the
+ * Report type doesn't carry yet, and a generic drawing would fake precision.
+ * This chain carries the broken-at-the-failing-check role in the meantime.
  */
 const CHAIN_CHECKS: { id: CheckId; label: string }[] = [
   { id: "install-path", label: "INSTALL PATH" },
