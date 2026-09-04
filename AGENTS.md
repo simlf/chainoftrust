@@ -39,8 +39,19 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    A new finding without a `concern` silently collapses into its check id.
 2. **Fixtures are not enough.** Both of the real bugs in this pipeline survived
    a passing test suite and died on first contact with `ollama/ollama`. After
-   changing a collector, run it live (`npm run dev`, then POST to `/analyse`)
-   against a real target before believing the tests.
+   changing a collector, run it live (`npm run dev`, then POST to `/analyse`
+   as form-encoded `target=<url>`, not JSON) against a real target before
+   believing the tests.
+3. **Presence detection and content fetching are two separate mechanisms that
+   drift apart.** `agent-config.ts`'s `PATTERNS` match by regex against every
+   tree path (any depth, free). `prose.ts`'s `PROSE_CANDIDATES` and
+   `selectFiles()` in `index.ts` match by *exact string* against a fixed list
+   (bounded by `MAX_FILES`) — a file only gets its content read if its literal
+   path is in that list. `renatoworks/strudel-claude` kept `CLAUDE.md` at
+   `.claude/CLAUDE.md`: the regex-based presence check would have caught it at
+   any depth once anchored right, but the literal candidate list still needed
+   the exact nested path added by hand. A new conventional agent-config
+   location needs both updated, not just one.
 
 ## Verdict calibration
 

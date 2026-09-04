@@ -49,8 +49,11 @@ const PATTERNS: Pattern[] = [
     severity: "warning",
   },
   {
+    // Anchored to filename only, not root: strudel-claude kept its CLAUDE.md at
+    // .claude/CLAUDE.md and both prose-facing collectors missed it because this
+    // pattern required the file at the tree root.
     label: "agent instruction file",
-    test: (p) => /^(CLAUDE|AGENTS|GEMINI)\.md$/.test(p) || /(^|\/)\.cursorrules$/.test(p),
+    test: (p) => /(^|\/)(CLAUDE|AGENTS|GEMINI)\.md$/.test(p) || /(^|\/)\.cursorrules$/.test(p),
     trigger: "on-clone",
     severity: "note",
   },
@@ -85,9 +88,18 @@ export interface AgentConfigScan {
   skillCount: number;
 }
 
+/**
+ * Claude Code's per-project, normally-personal permission file. Conventional
+ * practice is to gitignore it; a committed copy is a signal independent of
+ * whatever it grants, which is why it gets its own concern below rather than
+ * folding into the generic "settings file exists" pattern.
+ */
+const LOCAL_SETTINGS = /(^|\/)\.claude\/settings\.local\.json$/;
+
 export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
   const findings: Finding[] = [];
   const hookManifests: string[] = [];
+  const localSettings: string[] = [];
   const matched = new Map<string, string[]>();
 
   for (const entry of entries) {
@@ -97,9 +109,25 @@ export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
       list.push(entry.path);
       matched.set(pattern.label, list);
     }
-    if (/(^|\/)hooks\.json$/.test(entry.path) || /(^|\/)\.claude\/settings\.json$/.test(entry.path)) {
+    if (
+      /(^|\/)hooks\.json$/.test(entry.path) ||
+      /(^|\/)\.claude\/settings\.json$/.test(entry.path) ||
+      LOCAL_SETTINGS.test(entry.path)
+    ) {
       hookManifests.push(entry.path);
     }
+    if (LOCAL_SETTINGS.test(entry.path)) localSettings.push(entry.path);
+  }
+
+  if (localSettings.length > 0) {
+    findings.push({
+      check: "agent-config",
+      severity: "warning",
+      concern: "agent-config:local-settings-committed",
+      statement: `The repository commits ${localSettings.length} settings.local.json file${localSettings.length === 1 ? "" : "s"}. This file is conventionally personal and gitignored by default, so a committed copy is a signal independent of what it grants.`,
+      evidence: labelList(localSettings),
+      method: "tree",
+    });
   }
 
   for (const pattern of PATTERNS) {
@@ -148,34 +176,55 @@ export function scanAgentConfig(entries: TreeEntry[]): AgentConfigScan {
  * ships both, and the difference is the whole risk delta.
  */
 export function analyseHookManifest(path: string, source: string): Finding[] {
+  const findings: Finding[] = [];
+
   const events = new Set<string>();
   for (const m of source.matchAll(UNCONDITIONAL_HOOKS)) events.add(m[1]!);
 
-  if (events.size === 0) return [];
-
-  const commands = [...source.matchAll(/"command"\s*:\s*"([^"]{0,160})"/g)].map((m) => m[1]!);
-
-  const findings: Finding[] = [
-    {
+  if (events.size > 0) {
+    findings.push({
       check: "agent-config",
       severity: "warning",
       concern: "agent-config:hooks",
       statement: `The hook manifest registers ${events.size} lifecycle hook${events.size === 1 ? "" : "s"}: ${labelList([...events].sort())}. Hooks run when their event fires, without the user invoking anything by name.`,
       evidence: label(path),
       method: "file",
-    },
-  ];
-
-  if (commands.length > 0) {
-    findings.push({
-      check: "agent-config",
-      severity: "note",
-      concern: "agent-config:hook-commands",
-      statement: `The hook manifest runs ${commands.length} command${commands.length === 1 ? "" : "s"}. The first is quoted verbatim.`,
-      evidence: label(path),
-      method: "file",
-      quote: commands[0]!,
     });
+
+    const commands = [...source.matchAll(/"command"\s*:\s*"([^"]{0,160})"/g)].map((m) => m[1]!);
+    if (commands.length > 0) {
+      findings.push({
+        check: "agent-config",
+        severity: "note",
+        concern: "agent-config:hook-commands",
+        statement: `The hook manifest runs ${commands.length} command${commands.length === 1 ? "" : "s"}. The first is quoted verbatim.`,
+        evidence: label(path),
+        method: "file",
+        quote: commands[0]!,
+      });
+    }
+  }
+
+  // Claude Code settings files (settings.json, settings.local.json) grant
+  // tool permissions rather than register hooks. A wildcard Bash grant
+  // pre-authorizes a whole command family with no per-invocation prompt —
+  // this is what made strudel-claude's committed settings.local.json worth a
+  // human's attention: Bash(curl *), Bash(say *), Bash(sleep *), unscoped.
+  const allowMatch = /"allow"\s*:\s*\[([^\]]*)\]/s.exec(source);
+  if (allowMatch) {
+    const grants = [...allowMatch[1]!.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!);
+    const wildcardBash = grants.filter((g) => /^Bash\([^)]*\*[^)]*\)$/.test(g));
+    if (wildcardBash.length > 0) {
+      findings.push({
+        check: "agent-config",
+        severity: "warning",
+        concern: "agent-config:permission-grant",
+        statement: `The settings file pre-authorizes ${wildcardBash.length} Bash permission${wildcardBash.length === 1 ? "" : "s"} matching a wildcard, with no per-invocation prompt. The first is quoted verbatim.`,
+        evidence: label(path),
+        method: "file",
+        quote: wildcardBash[0]!,
+      });
+    }
   }
 
   // A maintainer flagging their own hook file is a fact worth carrying: the
