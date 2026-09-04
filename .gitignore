@@ -5,3 +5,6 @@ dist/
 .env
 .DS_Store
 .claude/settings.local.json
+
+# Local Lavish review artifacts (agent design-review scratch)
+.lavish/
