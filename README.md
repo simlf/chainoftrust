@@ -177,10 +177,17 @@ from the API, so an unanalysed target returns 404 rather than triggering work.
 **A plain Worker with server-rendered HTML, not SvelteKit.** Two pages, one
 form, no client-side state, no hydration. The rendered bundle is one Worker
 with no framework runtime, no build step beyond esbuild, and nothing shipped to
-the browser except HTML and inline CSS: no JavaScript at all, which the CSP
-enforces. Given that the product's whole claim is about what software is
-allowed to reach, a page that ships zero script and zero third-party requests
-is the argument, not just the implementation.
+the browser except HTML, inline CSS and two self-hosted font families served as
+Worker static assets (`public/fonts`): no JavaScript at all, which the CSP
+enforces, and zero third-party requests. Given that the product's whole claim
+is about what software is allowed to reach, a page that ships zero script and
+zero third-party requests is the argument, not just the implementation.
+
+The visual direction is "Containment Blueprint": the site is drawn as an
+engineering sheet, the sandbox's guarantees are rendered as design elements,
+and each report draws the chain of trust itself, one link per check, broken
+where trust fails. The verdict page's SVG is generated deterministically from
+the findings, like the verdict.
 
 **A small model, by design and by instruction.** The draft budgets the free
 tier as deterministic collectors plus a small model for the write-up, and the
