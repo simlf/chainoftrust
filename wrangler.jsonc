@@ -20,6 +20,13 @@
     "enabled": true
   },
 
+  // Self-hosted fonts (public/fonts/*.woff2). Requests matching a file here
+  // are served as static assets before the Worker runs; everything else still
+  // reaches the Worker. Keeps the pages at zero third-party requests.
+  "assets": {
+    "directory": "public"
+  },
+
   "vars": {
     // Monthly ceiling on model spend, in US cents. When the running total for
     // the current UTC month reaches this, the write-up is skipped and the
