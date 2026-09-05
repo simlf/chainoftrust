@@ -1,6 +1,7 @@
 import { registryQualifierFor } from "../lib/target";
 import type { CheckId, Finding, Report, Severity, StoredVerdict } from "../types";
 import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
+import { elevationSchematic } from "./elevation";
 import { esc, page } from "./layout";
 
 export function homePage(opts: {
@@ -97,6 +98,7 @@ export function verdictPage(stored: StoredVerdict, contact: string): Response {
   }</p>
 
 ${chainOfTrust(r)}
+${elevationSchematic(r)}
 
 ${
   stored.writeup
@@ -184,10 +186,10 @@ function finding(f: Finding, index: number): string {
  *
  * Deterministic over the findings, like the verdict itself.
  *
- * The mock's per-report install-path elevation schematic is deliberately not
- * shipped here: drawing it honestly needs shaped collector output that the
- * Report type doesn't carry yet, and a generic drawing would fake precision.
- * This chain carries the broken-at-the-failing-check role in the meantime.
+ * The mock's per-report install-path elevation schematic ships alongside
+ * this as `elevationSchematic()` in ./elevation.ts, derived from the same
+ * install-path findings rather than a purpose-built shape (see that file's
+ * header comment for why that is honest rather than a fake-precision shortcut).
  */
 const CHAIN_CHECKS: { id: CheckId; label: string }[] = [
   { id: "install-path", label: "INSTALL PATH" },

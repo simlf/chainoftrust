@@ -52,6 +52,16 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    any depth once anchored right, but the literal candidate list still needed
    the exact nested path added by hand. A new conventional agent-config
    location needs both updated, not just one.
+4. **The install-path elevation schematic (`src/ui/elevation.ts`) reads
+   `Report.findings` by concern id string, not by a shaped type.** There is no
+   structured install-path shape in `types.ts`; the schematic derives release,
+   installer, binary and daemon facts from `install-path:*` concern ids
+   `index.ts` already emits, the same way `chainOfTrust()` derives its chain
+   from severities. It anchors "an installer exists to draw at all" on the
+   concern `install-path:sudo`, which `installPathFindings()` pushes exactly
+   once per script found, clean or not. Renaming or dropping any of the
+   `install-path:*` concern ids in `index.ts` silently breaks the schematic
+   with no type error; `test/elevation.test.ts` is what would catch it.
 
 ## Verdict calibration
 
