@@ -75,6 +75,24 @@ configuring there, so its absence costs nothing. If a future change genuinely
 needs a higher per-invocation ceiling, that is a plan upgrade decision, not a
 config tweak — treat it the same as any other cost-incurring change.
 
+## Custom domain and contact address
+
+Production serves `chainoftrust.dev` and `www.chainoftrust.dev` as Workers
+custom domains (`wrangler.jsonc` `routes`), both free-plan compatible. The
+www-to-apex redirect lives in `src/index.ts` (top of `fetch()`), not a
+Cloudflare Page Rule or Redirect Rule: the deploying OAuth token only carries
+`workers_routes:write`, not a page_rules/DNS scope, so zone-level redirects
+are unreachable from this session. `SITE_URL` in `src/ui/layout.ts` is the
+single source for the canonical host used in `og:url`/canonical meta.
+
+`config.contact` (`src/env.ts`, sourced from the `CONTACT_EMAIL` var in
+`wrangler.jsonc`) is `contact@chainoftrust.dev`, an Email Routing alias on the
+zone forwarding to the personal inbox behind it. Set up via raw Cloudflare API
+calls (no wrangler CLI subcommand for Email Routing exists): destination
+address, `zones/{id}/email/routing/enable`, then a routing rule. Never put a
+personal email address back into this repo or the shipped pages; change the
+alias's destination in the Cloudflare dashboard instead.
+
 ## Verdict calibration
 
 `do-not-install` is deliberately hard to reach: all eight validation targets

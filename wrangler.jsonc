@@ -23,6 +23,18 @@
     "directory": "public"
   },
 
+  // Custom domains on the chainoftrust.dev zone (already a Cloudflare zone on
+  // this account). Free-plan compatible. www is a second custom domain rather
+  // than a Cloudflare Page Rule redirect: the deploying token has no
+  // page_rules/DNS scope, only workers_routes:write, so the redirect lives in
+  // the Worker (src/index.ts, top of fetch()) instead of zone config. Either
+  // way there is exactly one canonical host (chainoftrust.dev) once a request
+  // reaches the Worker.
+  "routes": [
+    { "pattern": "chainoftrust.dev", "custom_domain": true },
+    { "pattern": "www.chainoftrust.dev", "custom_domain": true }
+  ],
+
   "vars": {
     // Monthly ceiling on model spend, in US cents. When the running total for
     // the current UTC month reaches this, the write-up is skipped and the
@@ -52,7 +64,7 @@
     // the GET verdict URLs are unlimited. See README, "Cost controls".
     "FRESH_ANALYSES_PER_IP_PER_DAY": "5",
 
-    "CONTACT_EMAIL": "lefournsimon@gmail.com"
+    "CONTACT_EMAIL": "contact@chainoftrust.dev"
   },
 
   "d1_databases": [
