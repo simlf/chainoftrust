@@ -186,8 +186,10 @@ zero third-party requests is the argument, not just the implementation.
 The visual direction is "Containment Blueprint": the site is drawn as an
 engineering sheet, the sandbox's guarantees are rendered as design elements,
 and each report draws the chain of trust itself, one link per check, broken
-where trust fails. The verdict page's SVG is generated deterministically from
-the findings, like the verdict.
+where trust fails. Where an installer was found, the report also draws it as
+a surveyed elevation, release through daemon, with the severed checksum path
+dashed and unchecked stages hatched. Both SVGs are generated deterministically
+from the findings, like the verdict.
 
 **A small model, by design and by instruction.** The draft budgets the free
 tier as deterministic collectors plus a small model for the write-up, and the

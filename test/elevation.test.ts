@@ -110,6 +110,26 @@ describe("the install-path elevation schematic", () => {
     expect(svg).not.toContain("A 14 14 0 0 0");
   });
 
+  it("treats a note-severity checksum finding as intact, not severed", () => {
+    const findings: Finding[] = [
+      sudoClean,
+      {
+        check: "install-path",
+        severity: "note",
+        concern: "install-path:verification-absent",
+        statement: "install.sh downloads nothing, so there is no artefact to verify.",
+        evidence: "install.sh, whole file",
+        method: "file",
+      },
+    ];
+    const svg = elevationSchematic(report(findings));
+    expect(svg).toContain("checksum path intact");
+    expect(svg).not.toContain("checksum path severed");
+    expect(svg).not.toContain("stroke-dasharray");
+    // The checksum edge renders in the clean/ok color, not the note callout's own color.
+    expect(svg).toContain(`stroke="#9ff0c8"`);
+  });
+
   it("hatches the release stage when no release was found, without fabricating a finding", () => {
     const svg = elevationSchematic(
       report([sudoClean], [
