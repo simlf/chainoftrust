@@ -54,7 +54,7 @@ export function readConfig(env: Env): Config {
     modelId: env.MODEL_ID || "claude-haiku-4-5",
     ...(rate ? { modelRate: rate } : {}),
     ratePerDay: intOr(env.FRESH_ANALYSES_PER_IP_PER_DAY, 5),
-    contact: env.CONTACT_EMAIL || "hello@chainoftrust.dev",
+    contact: env.CONTACT_EMAIL || "contact@chainoftrust.dev",
     ...(provider ? { provider } : {}),
     ...(env.GITHUB_TOKEN ? { githubToken: env.GITHUB_TOKEN } : {}),
     ...(env.RATE_LIMIT_SALT ? { rateLimitSalt: env.RATE_LIMIT_SALT } : {}),
