@@ -63,6 +63,18 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    `install-path:*` concern ids in `index.ts` silently breaks the schematic
    with no type error; `test/elevation.test.ts` is what would catch it.
 
+## The account is on Workers Free, and `wrangler.jsonc` must stay deployable on it
+
+Production runs on the Workers Free plan deliberately: it is the only Cloudflare
+configuration with a real $0 ceiling (see `docs/cloudflare-spend-controls.md`).
+A `"limits"` block (`cpu_ms`/`subrequests`) in `wrangler.jsonc` is rejected
+outright on Free (`wrangler deploy` errors with code 100328, "CPU limits are
+not supported for the Free plan") — do not add one back. The plan's own native
+caps (10ms CPU, 50 subrequests) are already stricter than anything worth
+configuring there, so its absence costs nothing. If a future change genuinely
+needs a higher per-invocation ceiling, that is a plan upgrade decision, not a
+config tweak — treat it the same as any other cost-incurring change.
+
 ## Verdict calibration
 
 `do-not-install` is deliberately hard to reach: all eight validation targets
