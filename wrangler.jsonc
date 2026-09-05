@@ -7,15 +7,11 @@
   // node:path and node:fs. Neither is reachable on the one code path we use.
   "compatibility_flags": ["nodejs_compat"],
 
-  // Denial-of-wallet guards. Both are per-invocation ceilings, well below the
-  // platform defaults (30s CPU, 10k subrequests on Workers Paid). They bound a
-  // runaway analysis; they do not bound a monthly bill. See
-  // docs/cloudflare-spend-controls.md for what Cloudflare can and cannot cap.
-  "limits": {
-    "cpu_ms": 10000,
-    "subrequests": 60
-  },
-
+  // No "limits" block: the Free plan rejects it outright (Cloudflare error
+  // 100328, "CPU limits are not supported for the Free plan") and its own
+  // native caps (10ms CPU, 50 subrequests) are already stricter than the
+  // 10000ms/60 this block would have declared, so the guard is redundant on
+  // this plan. See docs/cloudflare-spend-controls.md.
   "observability": {
     "enabled": true
   },
@@ -65,7 +61,7 @@
       "database_name": "chainoftrust",
       // Replace with the id printed by `wrangler d1 create chainoftrust`.
       // This is the only value that cannot be committed ahead of time.
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "database_id": "482d2ae7-3a2c-4637-b8b7-7b1d71ca4f76",
       "migrations_dir": "migrations"
     }
   ]
