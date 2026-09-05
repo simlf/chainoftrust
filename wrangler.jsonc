@@ -35,6 +35,12 @@
     { "pattern": "www.chainoftrust.dev", "custom_domain": true }
   ],
 
+  // Adding "routes" makes wrangler default workers_dev to false, which took
+  // down the already-shared *.workers.dev URL with a 404. Kept on
+  // deliberately so that host keeps serving (redirecting to the apex, same
+  // as www) instead of dying the moment a custom domain exists.
+  "workers_dev": true,
+
   "vars": {
     // Monthly ceiling on model spend, in US cents. When the running total for
     // the current UTC month reaches this, the write-up is skipped and the
