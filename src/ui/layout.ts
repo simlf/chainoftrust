@@ -307,6 +307,10 @@ footer { margin-top: 1.5rem; font-size: 0.74rem; color: var(--dim); }
 .fence .note { font-size: 0.7rem; color: var(--dim); padding: 0 1.2rem 0.9rem; margin: 0; }
 `;
 
+const SITE_URL = "https://chainoftrust.dev";
+const DEFAULT_DESCRIPTION =
+  "Install-time trust reports for agent-facing tooling. Paste a repository URL and see what installing it would actually do.";
+
 export function page(opts: {
   title: string;
   body: string;
@@ -314,6 +318,15 @@ export function page(opts: {
   status?: number;
   /** The containment status strip, shown on the landing page only. */
   statusbar?: boolean;
+  /** Falls back to the site-wide description. Pass a report-specific one for a verdict page. */
+  description?: string;
+  /** Path this page lives at, for og:url. Falls back to the site root. */
+  path?: string;
+  /**
+   * Set only on pages whose URL is cache-key-immutable: the header a shared
+   * link should carry. Landing and status pages never set this.
+   */
+  cacheControl?: string;
 }): Response {
   const statusbar = opts.statusbar
     ? `<div class="statusbar">
@@ -324,13 +337,24 @@ export function page(opts: {
 </div>`
     : "";
 
+  const description = opts.description ?? DEFAULT_DESCRIPTION;
+  const url = `${SITE_URL}${opts.path ?? "/"}`;
+
   const html = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(opts.title)}</title>
-<meta name="description" content="Install-time trust reports for agent-facing tooling. Paste a repository URL and see what installing it would actually do.">
+<meta name="description" content="${esc(description)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="chainoftrust.dev">
+<meta property="og:title" content="${esc(opts.title)}">
+<meta property="og:description" content="${esc(description)}">
+<meta property="og:url" content="${esc(url)}">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="${esc(opts.title)}">
+<meta name="twitter:description" content="${esc(description)}">
 <style>${STYLES}</style>
 </head>
 <body>
@@ -356,6 +380,7 @@ ${opts.body}
         "default-src 'none'; style-src 'unsafe-inline'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
       "referrer-policy": "no-referrer",
       "x-content-type-options": "nosniff",
+      ...(opts.cacheControl ? { "cache-control": opts.cacheControl } : {}),
     },
   });
 }

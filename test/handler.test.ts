@@ -258,3 +258,19 @@ describe("an address past the submission ceiling", () => {
     expect(json.status).toBe(200);
   });
 });
+
+describe("Cache-Control on repeat views", () => {
+  it("lets a shared SHA-pinned report link be cached, but never the landing page", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub();
+
+    await worker.fetch(submit("o/r"), env);
+
+    const pinned = await worker.fetch(read("/r/github/o/r/abc123"), env);
+    expect(pinned.headers.get("cache-control")).toBe("public, max-age=3600");
+
+    const home = await worker.fetch(read("/"), env);
+    expect(home.headers.get("cache-control")).toBeNull();
+  });
+});

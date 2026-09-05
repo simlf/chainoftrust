@@ -53,7 +53,7 @@ ${opts.error ? `<div class="errorpanel">${esc(opts.error)}</div>` : ""}
 </div>
 
 <div class="dim-divider">What this is not</div>
-<div class="notpanel"><b>Not a vulnerability scanner.</b> Where an existing tool is authoritative it is cited, not duplicated: OpenSSF Scorecard for maintenance hygiene, Socket for registry alerts. The question here is what a piece of software asks permission to do when you install it.</div>
+<div class="notpanel"><b>Not a vulnerability scanner.</b> Where an existing tool is authoritative it is cited, not duplicated: OpenSSF Scorecard for maintenance hygiene, Socket for registry alerts. The question here is what a piece of software asks permission to do when you install it. Two of these views have no equivalent in either tool: install path reachability (does the verification code actually run) and agent config auto-discovery (what reaches an agent's harness before any install step).</div>
 
 <div class="titleblock">
   <div class="tb"><div class="k">Project</div><div class="v">chainoftrust.dev</div></div>
@@ -69,11 +69,16 @@ ${opts.error ? `<div class="errorpanel">${esc(opts.error)}</div>` : ""}
     body,
     contact: opts.contact,
     statusbar: true,
+    path: "/",
     ...(opts.status ? { status: opts.status } : {}),
   });
 }
 
-export function verdictPage(stored: StoredVerdict, contact: string): Response {
+export function verdictPage(
+  stored: StoredVerdict,
+  contact: string,
+  pinned = false,
+): Response {
   const r = stored.report;
   const t = r.target;
   const repo = `${t.owner}/${t.name}`;
@@ -154,7 +159,16 @@ ${
   <div class="tb"><div class="k">Formats</div><div class="v"><a href="${esc(verdictJsonPath(r))}">JSON</a> &middot; <a href="/">new survey</a></div></div>
 </div>`;
 
-  return page({ title: `${repo} - chainoftrust.dev`, body, contact });
+  return page({
+    title: `${repo} - chainoftrust.dev`,
+    body,
+    contact,
+    description: `${repo} at ${sha7}: ${VERDICT_LABEL[r.verdict]}, ${r.findings.length} finding${r.findings.length === 1 ? "" : "s"} across ${concerns} distinct concern${concerns === 1 ? "" : "s"}. Read one file at a time, nothing installed or executed.`,
+    path: verdictPath(r),
+    // Pinned by commit SHA: the URL never resolves to different content, so a
+    // repeat view of a shared link may be cached, same as the JSON route.
+    ...(pinned ? { cacheControl: "public, max-age=3600" } : {}),
+  });
 }
 
 function finding(f: Finding, index: number): string {
@@ -319,6 +333,7 @@ export function messagePage(opts: {
   message: string;
   contact: string;
   status: number;
+  path?: string;
 }): Response {
   const body = `
 <div class="dwghead">
@@ -328,5 +343,12 @@ export function messagePage(opts: {
 <h1>${esc(opts.heading)}</h1>
 <p class="lede">${esc(opts.message)}</p>
 <p><a href="/">Back to the start</a></p>`;
-  return page({ title: opts.title, body, contact: opts.contact, status: opts.status });
+  return page({
+    title: opts.title,
+    body,
+    contact: opts.contact,
+    status: opts.status,
+    description: opts.message,
+    ...(opts.path ? { path: opts.path } : {}),
+  });
 }
