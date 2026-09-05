@@ -49,21 +49,28 @@
 
     // Small model for the write-up. The findings come from the deterministic
     // collectors; the model only weighs and explains them. With an
-    // OPENROUTER_API_KEY set this must be an OpenRouter model id (for example
-    // "anthropic/claude-haiku-4.5"); with only an ANTHROPIC_API_KEY it is an
-    // Anthropic model id. Switching models is a config change, not a deploy.
-    "MODEL_ID": "claude-haiku-4-5",
+    // OPENROUTER_API_KEY set this must be a model id understood by whatever
+    // OPENROUTER_BASE_URL points at (OpenRouter itself, or another
+    // OpenAI-compatible host such as Chutes, see below); with only an
+    // ANTHROPIC_API_KEY it is an Anthropic model id. Switching models or
+    // providers is a config change, not a deploy.
+    "MODEL_ID": "deepseek-ai/DeepSeek-V4-Flash-0731-TEE",
 
     // Optional companions to MODEL_ID, absent by default:
     //   OPENROUTER_BASE_URL     - where the OpenAI-compatible summary call
     //                             goes when OPENROUTER_API_KEY is set. Defaults
-    //                             to https://openrouter.ai/api/v1. Pointing it
-    //                             elsewhere is an egress decision.
+    //                             to https://openrouter.ai/api/v1. Any
+    //                             OpenAI-compatible /chat/completions host
+    //                             works here, for example Chutes
+    //                             (https://llm.chutes.ai/v1, used in
+    //                             production for its cheap fast models).
+    //                             Pointing it elsewhere is an egress decision.
     //   MODEL_RATE_MICRO_CENTS  - "input,output" token rate in micro-cents for
     //                             the budget guard. The built-in table only
     //                             knows Anthropic models and prices anything
     //                             else pessimistically, so set this when
     //                             MODEL_ID names a model it does not know.
+    "OPENROUTER_BASE_URL": "https://llm.chutes.ai/v1",
 
     // Fresh analyses per IP per UTC day. A cache hit never counts against this,
     // though it still spends one of the separate daily submission units. Only

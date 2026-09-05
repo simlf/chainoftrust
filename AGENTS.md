@@ -104,6 +104,26 @@ address, `zones/{id}/email/routing/enable`, then a routing rule. Never put a
 personal email address back into this repo or the shipped pages; change the
 alias's destination in the Cloudflare dashboard instead.
 
+## The summary provider is live, and has no logging by design
+
+Production runs the OpenAI-compatible summary path against Chutes
+(`OPENROUTER_BASE_URL=https://llm.chutes.ai/v1`, `MODEL_ID`
+`deepseek-ai/DeepSeek-V4-Flash-0731-TEE`, `OPENROUTER_API_KEY` set), chosen
+for low per-token cost; any OpenAI-compatible `/chat/completions` host works
+there, OpenRouter or otherwise. `writeUp()` (`src/verdict/writeup.ts`)
+deliberately has no `console.*` calls anywhere in `src/` (grep confirms it),
+so `wrangler tail` never shows *why* a report degraded, only that it did not
+throw. To tell a real provider failure from budget/no-key degradation in
+production: check `model_spend` in D1 (`wrangler d1 execute chainoftrust
+--remote --command "SELECT * FROM model_spend"`) for a charge, and check the
+tail event's `wallTime` against `cpuTime` — a call that actually reached the
+provider blocks on network wait (seconds of wallTime, single-digit-ms
+cpuTime), while a same-millisecond return means it degraded before ever
+calling out. `MODEL_RATE_MICRO_CENTS` is unset for this model (not in the
+built-in Anthropic-only table), so the budget guard prices it at the table's
+most expensive known rate, not Chutes' real (much cheaper) rate; that only
+makes the guard trip earlier than necessary, never later.
+
 ## Verdict calibration
 
 `do-not-install` is deliberately hard to reach: all eight validation targets

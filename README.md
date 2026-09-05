@@ -66,9 +66,15 @@ of three modes, selected by which API key is configured:
 
 | Mode | Selected by | Summary call |
 |---|---|---|
-| **openrouter** | `OPENROUTER_API_KEY` set (wins when both are) | OpenAI-compatible chat completions, to `OPENROUTER_BASE_URL` (default OpenRouter), with `MODEL_ID` as the OpenRouter model id |
+| **openrouter** | `OPENROUTER_API_KEY` set (wins when both are) | OpenAI-compatible chat completions, to `OPENROUTER_BASE_URL` (default OpenRouter), with `MODEL_ID` as that host's model id |
 | **anthropic** | only `ANTHROPIC_API_KEY` set | Anthropic Messages API, with `MODEL_ID` as the Anthropic model id |
 | **none** | neither key set | No call. Deterministic verdict and all findings, no written summary |
+
+Despite the variable name, `OPENROUTER_BASE_URL` accepts any OpenAI-compatible
+`/chat/completions` host, not just OpenRouter. Production runs it against
+Chutes (`https://llm.chutes.ai/v1`, `MODEL_ID` `deepseek-ai/DeepSeek-V4-Flash-0731-TEE`),
+picked for its low per-token cost. Switching providers is that one variable
+plus `MODEL_ID`, not a code change.
 
 The **none** row is degraded mode: a supported mode, not an outage. A provider
 error or timeout degrades that one report the same way rather than failing it.
