@@ -113,7 +113,10 @@ public repository is the failure this product cannot afford.
 ## Publication
 
 No verdict on a third-party repository is published until the dispute policy
-exists. That means no public index and no seeded rows. See `docs/seed-dataset.md`.
+exists. That means no public index and no seeded rows, with one deliberate,
+narrow exception: the hardcoded `SHOWCASE` array (`src/ui/pages.ts`) puts a
+handful of favourable-or-neutral example reports on the landing page. See
+`docs/seed-dataset.md` for the policy and the carve-out it permits.
 
 ## Maintaining this file
 
