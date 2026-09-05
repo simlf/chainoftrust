@@ -190,8 +190,11 @@ h1 .underline { border-bottom: 3px solid var(--ice); }
 .module { border: 1px solid var(--line); padding: 1rem 1.05rem; position: relative; background: var(--blue-panel); }
 .module .ref { position: absolute; top: -0.62rem; left: 0.8rem; font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.16em; color: var(--ice); background: var(--blue-deep); padding: 0 0.45rem; border: 1px solid var(--line); }
 .module:nth-child(4) .ref { transform: rotate(-1.6deg); }
-.module h2 { margin: 0.1rem 0 0.35rem; font-family: var(--mono); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #f2f9ff; }
+.module h2 { margin: 0.1rem 0 0.35rem; font-family: var(--mono); font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #f2f9ff; overflow-wrap: anywhere; }
 .module p { margin: 0; font-size: 0.8rem; color: var(--dim); }
+.module .cta { margin-top: 0.6rem; }
+.module .cta a { font-family: var(--mono); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; }
+.showcase-lede { margin-bottom: 1.2rem; }
 
 .callouts { font-family: var(--mono); font-size: 0.72rem; color: var(--dim); display: flex; flex-wrap: wrap; gap: 0.5rem 1.6rem; }
 .callouts span::before { content: "\\25B8\\00a0"; color: var(--ice); }
