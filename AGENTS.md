@@ -111,6 +111,30 @@ landed on clean or warnings. If a change makes a mainstream project reach that
 tier, the change is wrong, not the project. A wrong verdict attached to a named
 public repository is the failure this product cannot afford.
 
+## Spend guarantees: caching and honest degradation
+
+Two guarantees the launch depends on, both enforced in `handleAnalyse`
+(`src/index.ts`) and proven in `test/reanalysis.test.ts`: the same repository
+at the same commit SHA is never re-collected or re-summarised (exact-key cache
+hit, before any rate limit is even consumed); a submission naming no explicit
+ref or commit that already has a report is served that report by default, with
+a visible newer-commit notice and an explicit refresh form, not silently
+re-analysed. Re-analysing is gated by `MIN_REANALYSIS_INTERVAL_MS` per
+repository, composed with the existing per-IP counters in `store.ts` rather
+than duplicating them. An explicit ref or commit in the submitted URL
+(`target.requestedRef !== ""`) always bypasses this gate: pasting a pin is
+already the deliberate act.
+
+Why there is no written summary is persisted, not just decided at write time:
+`writeup_degraded_reason` in D1 (migration `0003`) carries `"no-key"` (never
+configured), `"budget"` or `"error"` (a configured provider produced nothing
+this time) through to every cached read. `degradedNotice()` in
+`src/ui/pages.ts` is the only place that turns that into prose, and it is
+deliberately unable to say more than the reason it was given; extending
+`WriteupResult.degradedReason` in `src/verdict/writeup.ts` with a new case
+needs a matching case there or it silently falls back to the reason-agnostic
+wording.
+
 ## Publication
 
 No verdict on a third-party repository is published until the dispute policy
