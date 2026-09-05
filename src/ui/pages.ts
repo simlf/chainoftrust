@@ -4,6 +4,77 @@ import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
 import { elevationSchematic } from "./elevation";
 import { esc, page } from "./layout";
 
+/**
+ * A curated, hardcoded set of example reports, never a public index. Each
+ * entry names a commit that was verified by hand to render well and to land
+ * on a favourable-or-neutral verdict; the sha pins the link to that exact
+ * finding, so a repository that later regresses cannot silently turn this
+ * list unfavourable. Populated by running a real analysis against production
+ * (`POST /analyse`) and copying the resulting address here, the same way
+ * `ollama/ollama` first entered this codebase as a calibration target
+ * (docs/seed-dataset.md).
+ *
+ * `docs/seed-dataset.md` holds the line that no verdict on a third-party
+ * repository is published unrequested, because the disclosure and dispute
+ * policy for one does not exist yet. This list does not cross that line: it
+ * surfaces no verdict anyone would need to dispute, since every entry here is
+ * clean or warnings by construction and nothing unfavourable about anyone
+ * is ever shown. It is also not the public index that rule is guarding
+ * against, since it names a handful of examples the operator chose rather
+ * than listing what has been analysed. An unfavourable verdict must never be
+ * added here, and adding an entry is always a human, code-reviewed decision,
+ * never something a submission can cause on its own.
+ *
+ * The site's own analysis belongs here once chainoftrust itself is public;
+ * until then it would 404 (the repository is private), so it stays out
+ * rather than shipping a dead link. Adding it later is one entry.
+ */
+export interface ShowcaseEntry {
+  owner: string;
+  name: string;
+  sha: string;
+  note: string;
+}
+
+export const SHOWCASE: ShowcaseEntry[] = [
+  {
+    owner: "ollama",
+    name: "ollama",
+    sha: "83ed7d9965b1ee07e0f0b29fd46e47c31f0fcab8",
+    note: "Installer runs with elevated privileges and never checks the checksums its own release publishes.",
+  },
+  {
+    owner: "anthropics",
+    name: "claude-code",
+    sha: "d7dbd9a09f59775726ed14bbea8fc9dfdff62f7b",
+    note: "Ships hooks, a plugin manifest and ten skill definitions: agent config reaches a harness before any install step.",
+  },
+  {
+    owner: "astral-sh",
+    name: "uv",
+    sha: "b73e597cb1aa3d962dd2df5c692718ba4d851969",
+    note: "A Python build backend runs at install time, alongside Claude Code hooks committed in the same repository.",
+  },
+  {
+    owner: "modelcontextprotocol",
+    name: "servers",
+    sha: "d73f99efbfd40c3aa1b61e88728b3d49fb52608f",
+    note: "An MCP server registration, and a package manifest with no install-time lifecycle scripts at all.",
+  },
+];
+
+function showcase(): string {
+  return `
+<div class="dim-divider">Example reports, not an index</div>
+<p class="lede showcase-lede">A handful of reports we picked to show the shape of one: what the annotations look like, what the chain of trust draws, what the install-path schematic looks like when there is an installer to draw. Not everything analysed and not an activity feed, just examples.</p>
+<div class="modules">
+${SHOWCASE.map(
+  (s) =>
+    `<div class="module"><span class="ref">EXAMPLE</span><h2>${esc(s.owner)}/${esc(s.name)}</h2><p>${esc(s.note)}</p><p class="cta"><a href="/r/github/${esc(s.owner)}/${esc(s.name)}/${esc(s.sha)}">View the report &#8594;</a></p></div>`,
+).join("\n")}
+</div>`;
+}
+
 export function homePage(opts: {
   contact: string;
   error?: string;
@@ -54,7 +125,7 @@ ${opts.error ? `<div class="errorpanel">${esc(opts.error)}</div>` : ""}
 
 <div class="dim-divider">What this is not</div>
 <div class="notpanel"><b>Not a vulnerability scanner.</b> Where an existing tool is authoritative it is cited, not duplicated: OpenSSF Scorecard for maintenance hygiene, Socket for registry alerts. The question here is what a piece of software asks permission to do when you install it. Two of these views have no equivalent in either tool: install path reachability (does the verification code actually run) and agent config auto-discovery (what reaches an agent's harness before any install step).</div>
-
+${showcase()}
 <div class="titleblock">
   <div class="tb"><div class="k">Project</div><div class="v">chainoftrust.dev</div></div>
   <div class="tb"><div class="k">Drawing</div><div class="v">Intake &middot; Form 1</div></div>

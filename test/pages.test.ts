@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, Report, StoredVerdict } from "../src/types";
-import { homePage, verdictPage } from "../src/ui/pages";
+import { homePage, SHOWCASE, verdictPage } from "../src/ui/pages";
 import { scoreVerdict } from "../src/verdict/score";
 
 function report(findings: Finding[]): Report {
@@ -144,5 +144,43 @@ describe("competitive positioning on the homepage", () => {
     expect(body).toContain("install path reachability");
     expect(body).toContain("agent config auto-discovery");
     expect(body).not.toContain("—");
+  });
+});
+
+describe("the curated showcase on the homepage", () => {
+  it("holds a handful of entries, never zero and never a sprawling index", () => {
+    expect(SHOWCASE.length).toBeGreaterThanOrEqual(3);
+    expect(SHOWCASE.length).toBeLessThanOrEqual(5);
+  });
+
+  it("names a distinct repository per entry, each pinned to a full commit sha", () => {
+    const keys = SHOWCASE.map((s) => `${s.owner}/${s.name}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    for (const s of SHOWCASE) {
+      expect(s.sha).toMatch(/^[0-9a-f]{40}$/);
+    }
+  });
+
+  it("frames the list as curated examples, never as a complete or live index", async () => {
+    const body = await homePage({ contact: "test@example.com" }).text();
+    expect(body).toContain("Example reports, not an index");
+    expect(body).toContain("Not everything analysed");
+    expect(body).not.toContain("—");
+  });
+
+  it("links every entry to its real, sha-pinned report page", async () => {
+    const body = await homePage({ contact: "test@example.com" }).text();
+    for (const s of SHOWCASE) {
+      expect(body).toContain(`href="/r/github/${s.owner}/${s.name}/${s.sha}"`);
+    }
+  });
+
+  it("carries no timestamp or count that would misread as an activity feed", async () => {
+    const body = await homePage({ contact: "test@example.com" }).text();
+    // The showcase section itself must not print a generated-at date or a
+    // "N repositories analysed" style count; the wording it does carry is
+    // asserted above. This just guards against reintroducing either shape.
+    expect(body).not.toMatch(/\d+ repositories analysed/i);
+    expect(body).not.toMatch(/analysed \d+ (minutes|hours|days) ago/i);
   });
 });
