@@ -149,6 +149,13 @@ export interface StoredVerdict {
   report: Report;
   writeup: string | null;
   writeupModel: string | null;
+  /**
+   * Why there is no writeup, when there is none. Persisted so the page can
+   * render an honest, reason-specific notice on a cached read, not just on
+   * the request that generated it. Null on a report that has a writeup, and
+   * on a report stored before this field existed.
+   */
+  writeupDegradedReason: "budget" | "no-key" | "error" | null;
   cached: boolean;
   createdAt: number;
 }

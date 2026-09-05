@@ -3,7 +3,7 @@ import { readConfig, type Config, type Env } from "./env";
 import { Fetcher } from "./lib/fetcher";
 import { decodeSegments, InvalidTarget, parseTarget } from "./lib/target";
 import { hashIp, Store, utcDay, type RateLimitResult } from "./store";
-import type { StoredVerdict } from "./types";
+import type { Report, StoredVerdict } from "./types";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
 import { buildReport } from "./verdict/score";
 import { writeUp } from "./verdict/writeup";
@@ -19,6 +19,19 @@ const MAX_FILE_BYTES = 256 * 1024;
  * up: a reader who never runs a fresh analysis still gets a hundred lookups.
  */
 const SUBMISSIONS_PER_DAY = 100;
+
+/**
+ * Floor on how often one repository can be freshly re-analysed.
+ *
+ * Only bites the deliberate-refresh path (see handleAnalyse): a bare repository
+ * or package submission with a report already on file is served that report by
+ * default, not re-run, however many times the same URL is pasted. This is what
+ * stops a visitor who does ask for a refresh from turning a busy repository's
+ * traffic into unbounded fresh collections. It composes with the per-IP
+ * analysis and submission counters rather than replacing them; both still
+ * apply once this floor is cleared.
+ */
+export const MIN_REANALYSIS_INTERVAL_MS = 60 * 60 * 1000;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -139,6 +152,25 @@ async function handleAnalyse(
   const cached = await store.getVerdict(resolved.target.cacheKey);
   if (cached) return redirect(verdictPath(cached.report));
 
+  // A submission that named no explicit ref or commit tracks the repository's
+  // moving head, so pasting the same URL twice can resolve to a new commit
+  // with nothing the visitor did to ask for a fresh analysis. If one already
+  // exists for this repository, serving it is the default; re-analysing it is
+  // a deliberate act (the "refresh" field), gated by the interval above so
+  // that deliberate act cannot itself be hammered. An explicit ref or commit in
+  // the input is already the deliberate act, and skips this gate entirely.
+  if (resolved.target.requestedRef === "") {
+    const latest = await store.getLatestForRepo(resolved.target.owner, resolved.target.name);
+    if (latest && latest.report.target.sha !== resolved.target.sha) {
+      const refreshRequested = String(form.get("refresh") ?? "") === "1";
+      if (!refreshRequested) {
+        return redirect(stalePath(latest.report, resolved.target.sha));
+      }
+      const wait = MIN_REANALYSIS_INTERVAL_MS - (Date.now() - latest.createdAt);
+      if (wait > 0) return reanalysisTooSoonPage(latest.report.target.sha, wait, config);
+    }
+  }
+
   const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
   if (!limit.allowed) return refusedPage(limit, config);
 
@@ -155,7 +187,7 @@ async function handleAnalyse(
     });
     await store.recordSpend(summary.microCents);
 
-    await store.putVerdict(report, summary.text, summary.model);
+    await store.putVerdict(report, summary.text, summary.model, summary.degradedReason);
     return redirect(verdictPath(report));
   } catch (err) {
     // The analysis produced nothing, so the slot goes back, up to the daily
@@ -205,6 +237,29 @@ function storageFaultPage(config: Config, counter: "submissions" | "fresh analys
     message: `The counter that tracks ${counter} could not be read, so this submission was not started. Nothing was analysed and nothing was published. Trying again in a moment is reasonable. Reports that already exist stay readable at their own addresses.`,
     contact: config.contact,
     status: 503,
+  });
+}
+
+/**
+ * Where the existing report for a repository lives, decorated with the newer
+ * commit a fresh submission just resolved. The verdict page reads that
+ * decoration to offer the explicit refresh, so a repeat submission never
+ * silently re-analyses; it lands back on the report that already exists.
+ */
+function stalePath(latest: Report, newerSha: string): string {
+  const path = verdictPath(latest);
+  const sep = path.includes("?") ? "&" : "?";
+  return `${path}${sep}newer=${encodeURIComponent(newerSha)}`;
+}
+
+function reanalysisTooSoonPage(sha: string, waitMs: number, config: Config): Response {
+  const minutes = Math.max(1, Math.ceil(waitMs / 60_000));
+  return messagePage({
+    title: "Too soon to refresh - chainoftrust.dev",
+    heading: "This repository was analysed too recently to refresh",
+    message: `The report at commit ${sha.slice(0, 7)} is the most recent one on file for this repository, and refreshing it again is not available for about ${minutes} more minute${minutes === 1 ? "" : "s"}. This floor exists so a busy repository cannot be used to spend fresh analyses by hammering the refresh action. The existing report is still readable at its own address.`,
+    contact: config.contact,
+    status: 429,
   });
 }
 
@@ -288,7 +343,17 @@ async function handleVerdictLookup(
     );
   }
 
-  return verdictPage(stored, config.contact, Boolean(match.sha));
+  // The "newer" decoration only ever comes from a redirect this Worker itself
+  // wrote (see stalePath). It is still visitor-suppliable on a raw GET, so it
+  // is shape-checked and, when it names the commit this report already is,
+  // dropped: a stale banner on a report that is not stale is not honest.
+  const newerParam = url.searchParams.get("newer");
+  const newerCommit =
+    newerParam && /^[0-9a-f]{4,64}$/i.test(newerParam) && newerParam !== stored.report.target.sha
+      ? newerParam
+      : null;
+
+  return verdictPage(stored, config.contact, Boolean(match.sha), newerCommit);
 }
 
 function redirect(location: string): Response {

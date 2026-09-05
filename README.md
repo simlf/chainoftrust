@@ -125,6 +125,12 @@ What this repository does instead:
 - Cache by commit SHA. The same commit is never analysed twice, and a cache hit
   never costs an analysis. Reading an existing verdict at its own address costs
   nothing at all: those URLs do no upstream work and are not rate limited.
+- A repository that has moved to a newer commit still serves its last report by
+  default, with a notice and an explicit "analyse the newer commit" action, so
+  pasting the same URL twice never re-spends. That action is throttled to at
+  most once per hour per repository, so hammering it cannot burn fresh
+  analyses. An explicit commit or ref pasted in the URL always bypasses this,
+  since that is already the deliberate act.
 - 5 fresh analyses per IP per UTC day. An analysis that fails before a report is
   stored gives its slot back, up to a daily refund allowance. Past that a
   failure costs the slot.
