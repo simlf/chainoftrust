@@ -42,16 +42,11 @@ export class Store {
   async getVerdict(cacheKey: string): Promise<StoredVerdict | null> {
     const row = await this.db
       .prepare(
-        `SELECT report_json, writeup, writeup_model, created_at
+        `SELECT report_json, writeup, writeup_model, writeup_degraded_reason, created_at
            FROM verdicts WHERE cache_key = ?`,
       )
       .bind(cacheKey)
-      .first<{
-        report_json: string;
-        writeup: string | null;
-        writeup_model: string | null;
-        created_at: number;
-      }>();
+      .first<VerdictRow>();
     return row ? hydrate(row) : null;
   }
 
@@ -68,18 +63,13 @@ export class Store {
   ): Promise<StoredVerdict | null> {
     const row = await this.db
       .prepare(
-        `SELECT report_json, writeup, writeup_model, created_at
+        `SELECT report_json, writeup, writeup_model, writeup_degraded_reason, created_at
            FROM verdicts
           WHERE host = 'github' AND owner = ? AND name = ? AND ref = ?
           ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(owner.toLowerCase(), name.toLowerCase(), sha)
-      .first<{
-        report_json: string;
-        writeup: string | null;
-        writeup_model: string | null;
-        created_at: number;
-      }>();
+      .first<VerdictRow>();
     return row ? hydrate(row) : null;
   }
 
@@ -87,18 +77,13 @@ export class Store {
   async getLatestForRepo(owner: string, name: string): Promise<StoredVerdict | null> {
     const row = await this.db
       .prepare(
-        `SELECT report_json, writeup, writeup_model, created_at
+        `SELECT report_json, writeup, writeup_model, writeup_degraded_reason, created_at
            FROM verdicts
           WHERE host = 'github' AND owner = ? AND name = ?
           ORDER BY created_at DESC LIMIT 1`,
       )
       .bind(owner.toLowerCase(), name.toLowerCase())
-      .first<{
-        report_json: string;
-        writeup: string | null;
-        writeup_model: string | null;
-        created_at: number;
-      }>();
+      .first<VerdictRow>();
     return row ? hydrate(row) : null;
   }
 
@@ -106,16 +91,21 @@ export class Store {
     report: Report,
     writeup: string | null,
     writeupModel: string | null,
+    writeupDegradedReason: "budget" | "no-key" | "error" | null,
   ): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO verdicts
-           (cache_key, host, owner, name, ref, verdict, report_json, writeup, writeup_model, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (cache_key, host, owner, name, ref, verdict, report_json, writeup, writeup_model, writeup_degraded_reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(cache_key) DO UPDATE SET
            report_json = excluded.report_json,
            writeup = COALESCE(excluded.writeup, verdicts.writeup),
-           writeup_model = COALESCE(excluded.writeup_model, verdicts.writeup_model)`,
+           writeup_model = COALESCE(excluded.writeup_model, verdicts.writeup_model),
+           writeup_degraded_reason = CASE
+             WHEN COALESCE(excluded.writeup, verdicts.writeup) IS NOT NULL THEN NULL
+             ELSE COALESCE(verdicts.writeup_degraded_reason, excluded.writeup_degraded_reason)
+           END`,
       )
       .bind(
         report.target.cacheKey,
@@ -127,6 +117,7 @@ export class Store {
         JSON.stringify(report),
         writeup,
         writeupModel,
+        writeupDegradedReason,
         Date.now(),
       )
       .run();
@@ -307,17 +298,25 @@ export class Store {
   }
 }
 
-function hydrate(row: {
+interface VerdictRow {
   report_json: string;
   writeup: string | null;
   writeup_model: string | null;
+  writeup_degraded_reason: string | null;
   created_at: number;
-}): StoredVerdict | null {
+}
+
+const DEGRADED_REASONS = new Set(["budget", "no-key", "error"]);
+
+function hydrate(row: VerdictRow): StoredVerdict | null {
   try {
     return {
       report: JSON.parse(row.report_json) as Report,
       writeup: row.writeup,
       writeupModel: row.writeup_model,
+      writeupDegradedReason: DEGRADED_REASONS.has(row.writeup_degraded_reason ?? "")
+        ? (row.writeup_degraded_reason as "budget" | "no-key" | "error")
+        : null,
       cached: true,
       createdAt: row.created_at,
     };

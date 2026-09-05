@@ -149,6 +149,7 @@ export function verdictPage(
   stored: StoredVerdict,
   contact: string,
   pinned = false,
+  newerCommit: string | null = null,
 ): Response {
   const r = stored.report;
   const t = r.target;
@@ -173,6 +174,17 @@ export function verdictPage(
     stored.cached ? `<span class="cachechit">Served from cache</span>` : ""
   }</p>
 
+${
+  newerCommit
+    ? `<div class="notpanel">This report is for commit ${esc(sha7)}. This repository has moved to a newer commit, ${esc(newerCommit.slice(0, 7))}. Nothing re-analyses on its own: a fresh analysis of the newer commit is a deliberate act.
+<form method="post" action="/analyse">
+  <input type="hidden" name="target" value="${esc(repo)}">
+  <input type="hidden" name="refresh" value="1">
+  <button type="submit">Analyse the newer commit</button>
+</form></div>`
+    : ""
+}
+
 ${chainOfTrust(r)}
 ${elevationSchematic(r)}
 
@@ -180,7 +192,7 @@ ${
   stored.writeup
     ? `<p class="summary">${esc(stored.writeup)}</p>`
     : `<p class="summary">${esc(VERDICT_SUMMARY[r.verdict])}</p>
-       <div class="notpanel">The written summary was skipped for this report. The findings below are the analysis; the summary is only prose over them.</div>`
+       <div class="notpanel">${esc(degradedNotice(stored.writeupDegradedReason))}</div>`
 }
 ${
   stored.writeupModel
@@ -240,6 +252,29 @@ ${
     // repeat view of a shared link may be cached, same as the JSON route.
     ...(pinned ? { cacheControl: "public, max-age=3600" } : {}),
   });
+}
+
+/**
+ * Honest wording for a report with no written summary, distinguishing what the
+ * code can actually tell apart. "no-key" means this deployment never had a
+ * summary provider configured, which is not a failure of anything. "budget"
+ * and "error" both mean a provider was configured and the call did not
+ * produce prose this time, whether because the monthly ceiling was reached or
+ * because the provider itself failed; either way the honest claim is that the
+ * summary is temporarily unavailable, not that it will never come back. A
+ * null reason (a report stored before this distinction existed) gets the
+ * older, reason-agnostic wording rather than a guess.
+ */
+function degradedNotice(reason: StoredVerdict["writeupDegradedReason"]): string {
+  switch (reason) {
+    case "no-key":
+      return "No summary provider is configured for this deployment, so no written summary was ever attempted. The findings below are the whole analysis.";
+    case "budget":
+    case "error":
+      return "The written summary is temporarily unavailable. The deterministic findings below are complete and unaffected.";
+    default:
+      return "The written summary was skipped for this report. The findings below are the analysis; the summary is only prose over them.";
+  }
 }
 
 function finding(f: Finding, index: number): string {

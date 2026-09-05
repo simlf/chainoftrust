@@ -29,13 +29,18 @@ function report(findings: Finding[]): Report {
   };
 }
 
-function stored(findings: Finding[]): StoredVerdict {
+function stored(
+  findings: Finding[],
+  overrides: Partial<StoredVerdict> = {},
+): StoredVerdict {
   return {
     report: report(findings),
     writeup: null,
     writeupModel: null,
+    writeupDegradedReason: null,
     cached: false,
     createdAt: 0,
+    ...overrides,
   };
 }
 
@@ -95,6 +100,42 @@ describe("the chain of trust drawing", () => {
   it("ships no em dashes", async () => {
     const page = await html([f({})]);
     expect(page).not.toContain("—");
+  });
+});
+
+describe("honest wording when there is no written summary", () => {
+  async function bodyFor(reason: StoredVerdict["writeupDegradedReason"]): Promise<string> {
+    return await verdictPage(
+      stored([f({})], { writeupDegradedReason: reason }),
+      "test@example.com",
+    ).text();
+  }
+
+  it("says no provider was ever configured, distinct from a failure, when the reason is no-key", async () => {
+    const body = await bodyFor("no-key");
+    expect(body).toContain("No summary provider is configured for this deployment");
+    expect(body).not.toContain("temporarily unavailable");
+  });
+
+  it("says the summary is temporarily unavailable when a configured provider hit its budget ceiling", async () => {
+    const body = await bodyFor("budget");
+    expect(body).toContain("temporarily unavailable");
+    expect(body).toContain("deterministic findings below are complete and unaffected");
+    expect(body).not.toContain("No summary provider is configured");
+  });
+
+  it("says the summary is temporarily unavailable when a configured provider failed", async () => {
+    const body = await bodyFor("error");
+    expect(body).toContain("temporarily unavailable");
+    expect(body).toContain("deterministic findings below are complete and unaffected");
+    expect(body).not.toContain("No summary provider is configured");
+  });
+
+  it("never invents a reason for a report stored before this field existed", async () => {
+    const body = await bodyFor(null);
+    expect(body).toContain("The written summary was skipped for this report");
+    expect(body).not.toContain("temporarily unavailable");
+    expect(body).not.toContain("No summary provider is configured");
   });
 });
 

@@ -12,6 +12,7 @@ interface VerdictRow {
   report_json: string;
   writeup: string | null;
   writeup_model: string | null;
+  writeup_degraded_reason: string | null;
   created_at: number;
 }
 
@@ -26,6 +27,10 @@ function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; b
   const prunes = { count: 0 };
   const returning = opts.returning ?? "row";
   const counterReadable = opts.counterReadable ?? true;
+  // A monotonic stand-in for wall-clock order: tests care about which insert
+  // came first, not real elapsed time, and two inserts in the same
+  // millisecond must still be distinguishable.
+  let seq = 0;
 
   const db = {
     counters,
@@ -54,6 +59,46 @@ function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; b
             }
             return;
           }
+          if (text.startsWith("INSERT INTO verdicts")) {
+            const [
+              cacheKey,
+              host,
+              owner,
+              name,
+              ref,
+              verdict,
+              reportJson,
+              writeup,
+              writeupModel,
+              writeupDegradedReason,
+            ] = args as [string, string, string, string, string, string, string, string | null, string | null, string | null];
+            void host;
+            void verdict;
+            const existing = verdicts.find((v) => v.cache_key === cacheKey);
+            if (existing) {
+              existing.report_json = reportJson;
+              const effectiveWriteup = writeup ?? existing.writeup;
+              existing.writeup_degraded_reason =
+                effectiveWriteup !== null
+                  ? null
+                  : (existing.writeup_degraded_reason ?? writeupDegradedReason);
+              existing.writeup = effectiveWriteup;
+              existing.writeup_model = writeupModel ?? existing.writeup_model;
+            } else {
+              verdicts.push({
+                cache_key: cacheKey,
+                owner,
+                name,
+                ref,
+                report_json: reportJson,
+                writeup,
+                writeup_model: writeupModel,
+                writeup_degraded_reason: writeupDegradedReason,
+                created_at: seq++,
+              });
+            }
+            return;
+          }
           throw new Error(`unmodelled statement: ${text}`);
         },
         async first<T>(): Promise<T | null> {
@@ -79,6 +124,12 @@ function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; b
               .sort((a, b) => b.created_at - a.created_at);
             return (matches[0] ?? null) as T | null;
           }
+          if (text.includes("FROM verdicts WHERE host = 'github' AND owner = ? AND name = ?")) {
+            const matches = verdicts
+              .filter((v) => v.owner === args[0] && v.name === args[1])
+              .sort((a, b) => b.created_at - a.created_at);
+            return (matches[0] ?? null) as T | null;
+          }
           throw new Error(`unmodelled statement: ${text}`);
         },
       };
@@ -97,6 +148,7 @@ function storedRow(cacheKey: string, report: Partial<Report["target"]> & { sha: 
     report_json: JSON.stringify({ target: { cacheKey, ...report } }),
     writeup: null,
     writeup_model: null,
+    writeup_degraded_reason: null,
     created_at: 1,
   };
 }
@@ -359,6 +411,109 @@ describe("which report a verdict URL resolves to", () => {
 
     expect(await store.getVerdictForQuery("o", "r", sha, "npm:uv@1.0.0")).not.toBeNull();
     expect(await store.getVerdictForQuery("o", "r", sha, "npm:uv@1.0.1")).toBeNull();
+  });
+});
+
+function reportAt(owner: string, name: string, sha: string): Report {
+  return {
+    target: {
+      cacheKey: cacheKeyFor(owner, name, sha),
+      host: "github",
+      owner,
+      name,
+      requestedRef: "",
+      sha,
+      defaultBranch: "main",
+    },
+    verdict: "clean",
+    findings: [],
+    notChecked: [],
+    proseExcerpts: [],
+    stats: {
+      filesInTree: 0,
+      totalBytes: 0,
+      opaqueBytes: 0,
+      filesFetched: 0,
+      fetchBudgetExhausted: false,
+    },
+    generatedAt: "2026-09-05T00:00:00.000Z",
+  };
+}
+
+describe("why a report carries no writeup", () => {
+  it("round trips the degraded reason through put and get", async () => {
+    const db = fakeDb();
+    const store = new Store(db as never);
+    const report = reportAt("o", "r", "abc123");
+
+    await store.putVerdict(report, null, null, "budget");
+
+    const found = await store.getVerdict(report.target.cacheKey);
+    expect(found?.writeupDegradedReason).toBe("budget");
+    expect(found?.writeup).toBeNull();
+  });
+
+  it("clears a previously recorded reason once a real writeup lands", async () => {
+    // A retry that later succeeds must not leave the earlier failure's reason
+    // attached to a report that now has real prose.
+    const db = fakeDb();
+    const store = new Store(db as never);
+    const report = reportAt("o", "r", "abc123");
+
+    await store.putVerdict(report, null, null, "error");
+    await store.putVerdict(report, "The installer does a thing.", "claude-haiku-4-5", null);
+
+    const found = await store.getVerdict(report.target.cacheKey);
+    expect(found?.writeup).toBe("The installer does a thing.");
+    expect(found?.writeupDegradedReason).toBeNull();
+  });
+
+  it("does not attach a later failure's reason to a report that already has prose", async () => {
+    // The writeup itself is kept (COALESCE keeps the old one when a later
+    // write carries none), so the reason attached to it must agree: a report
+    // that still displays its earlier prose must not also carry a stale
+    // "why there is no summary" reason underneath it.
+    const db = fakeDb();
+    const store = new Store(db as never);
+    const report = reportAt("o", "r", "abc123");
+
+    await store.putVerdict(report, "The installer does a thing.", "claude-haiku-4-5", null);
+    await store.putVerdict(report, null, null, "error");
+
+    const found = await store.getVerdict(report.target.cacheKey);
+    expect(found?.writeup).toBe("The installer does a thing.");
+    expect(found?.writeupDegradedReason).toBeNull();
+  });
+
+  it("treats an unrecognised stored value the same as no reason, never inventing one", async () => {
+    const db = fakeDb();
+    db.verdicts.push({
+      ...storedRow(cacheKeyFor("o", "r", "abc123"), { sha: "abc123", owner: "o", name: "r" }),
+      writeup_degraded_reason: "some-future-reason-this-code-does-not-know",
+    });
+    const store = new Store(db as never);
+
+    const found = await store.getVerdict(cacheKeyFor("o", "r", "abc123"));
+    expect(found?.writeupDegradedReason).toBeNull();
+  });
+});
+
+describe("the most recent report for a repository", () => {
+  it("finds the latest across different commits, not just the newest insert order", async () => {
+    const db = fakeDb();
+    const store = new Store(db as never);
+
+    await store.putVerdict(reportAt("o", "r", "older"), null, "m", null);
+    await store.putVerdict(reportAt("o", "r", "newer"), null, "m", null);
+
+    const found = await store.getLatestForRepo("o", "r");
+    expect(found?.report.target.sha).toBe("newer");
+  });
+
+  it("answers nothing for a repository that has never been analysed", async () => {
+    const db = fakeDb();
+    const store = new Store(db as never);
+    expect(await store.getLatestForRepo("o", "unseen")).toBeNull();
   });
 });
 

@@ -7,13 +7,25 @@ import type { Env } from "../src/env";
  * models only those shapes and throws on anything else, so a query it does not
  * model cannot pass silently.
  */
+interface FakeRow {
+  report_json: string;
+  owner: string;
+  name: string;
+  createdAt: number;
+}
+
 function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
   const counters = new Map<string, number>();
-  const verdicts = new Map<string, string>();
+  const verdicts = new Map<string, FakeRow>();
+  // A monotonic stand-in for wall-clock order: tests care about which insert
+  // came first, not real elapsed time.
+  let seq = 0;
 
   return {
     counters,
-    verdicts,
+    verdicts: {
+      clear: () => verdicts.clear(),
+    },
     prepare(sql: string) {
       const text = sql.replace(/\s+/g, " ").trim();
       let args: unknown[] = [];
@@ -34,7 +46,12 @@ function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
             // then produces nothing, which is the case the release path pays
             // a slot back for.
             if (opts.failVerdictWrites) throw new Error("verdict write failed");
-            verdicts.set(String(args[0]), String(args[6]));
+            verdicts.set(String(args[0]), {
+              report_json: String(args[6]),
+              owner: String(args[2]),
+              name: String(args[3]),
+              createdAt: seq++,
+            });
             return;
           }
           if (text.startsWith("INSERT INTO model_spend")) return;
@@ -52,10 +69,20 @@ function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
             return count === undefined ? null : ({ count } as T);
           }
           if (text.includes("FROM verdicts WHERE cache_key = ?")) {
-            const json = verdicts.get(String(args[0]));
-            return json
-              ? ({ report_json: json, writeup: null, writeup_model: null, created_at: 1 } as T)
-              : null;
+            const row = verdicts.get(String(args[0]));
+            return row ? toResultRow(row) : null;
+          }
+          if (
+            text.includes("FROM verdicts") &&
+            text.includes("WHERE host = 'github' AND owner = ? AND name = ?") &&
+            !text.includes("AND ref = ?")
+          ) {
+            // getLatestForRepo: no ref filter, most recent insert for the repo.
+            const [owner, name] = args as [string, string];
+            const matches = [...verdicts.values()]
+              .filter((r) => r.owner === owner && r.name === name)
+              .sort((a, b) => b.createdAt - a.createdAt);
+            return matches[0] ? toResultRow(matches[0]) : null;
           }
           if (text.startsWith("SELECT micro_cents FROM model_spend")) return null;
           throw new Error(`unmodelled statement: ${text}`);
@@ -64,6 +91,16 @@ function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
       return stmt;
     },
   };
+}
+
+function toResultRow<T>(row: FakeRow): T {
+  return {
+    report_json: row.report_json,
+    writeup: null,
+    writeup_model: null,
+    writeup_degraded_reason: null,
+    created_at: row.createdAt,
+  } as T;
 }
 
 const REPO = {
