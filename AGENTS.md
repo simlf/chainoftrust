@@ -63,15 +63,16 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    `install-path:*` concern ids in `index.ts` silently breaks the schematic
    with no type error; `test/elevation.test.ts` is what would catch it.
 
-## There is no production deployment yet
+## `.github/workflows/deploy.yml` has never gone green
 
-Every run of `.github/workflows/deploy.yml` on `main` has failed
-(`gh-axi run list --workflow=deploy.yml`), all on the same step: `CLOUDFLARE_API_TOKEN`
-is not set (`gh-axi secret list` returns none). `chainoftrust.dev` does not
-resolve. Do not assume a live site exists, and do not treat "POST /analyse on
-the live site" instructions as executable until someone confirms the secret
-is set and a deploy has gone green. Verify locally instead: `npm run
-db:migrate:local`, `npm run dev`, then POST to `http://localhost:8787/analyse`.
+Every run of the `Deploy` workflow on `main` fails on the same step
+(`gh-axi run list --workflow=deploy.yml`): `CLOUDFLARE_API_TOKEN` is not set as
+a repo secret (`gh-axi secret list` returns none). Production is real and
+live regardless (see the custom domain section below) because every deploy so
+far has been pushed by hand with `wrangler deploy` from a machine that has the
+token locally. Do not treat a green CI run as the signal that a change is
+live, and do not add work that depends on this workflow succeeding without
+confirming the secret has been set.
 
 ## The account is on Workers Free, and `wrangler.jsonc` must stay deployable on it
 
