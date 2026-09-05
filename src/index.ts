@@ -24,6 +24,17 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const config = readConfig(env);
     const url = new URL(request.url);
+
+    if (url.hostname !== "chainoftrust.dev" && url.hostname.endsWith(".chainoftrust.dev")) {
+      url.hostname = "chainoftrust.dev";
+      return Response.redirect(url.toString(), 301);
+    }
+
+    if (url.hostname.endsWith(".workers.dev")) {
+      url.hostname = "chainoftrust.dev";
+      return Response.redirect(url.toString(), 301);
+    }
+
     const store = new Store(env.DB);
 
     try {
