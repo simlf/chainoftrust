@@ -17,6 +17,13 @@ a decision that has not been taken. Until it is:
 - there is no public index or listing of what has been analysed,
 - the footer carries a contact address for corrections.
 
+The one deliberate exception is the landing page's curated showcase: a
+hardcoded, code-reviewed handful of favourable-or-neutral reports (`SHOWCASE`
+in `src/ui/pages.ts`), presented as examples rather than an index or an
+activity feed. It carries no verdict anyone would need to dispute, since
+unfavourable verdicts are never listed there. See the comment at that array's
+definition for the full reasoning.
+
 The evidence below lives here as test fixtures and as calibration, which is
 what makes it useful without publishing anything.
 

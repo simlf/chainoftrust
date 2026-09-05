@@ -63,6 +63,17 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    `install-path:*` concern ids in `index.ts` silently breaks the schematic
    with no type error; `test/elevation.test.ts` is what would catch it.
 
+## `.github/workflows/deploy.yml` has never gone green
+
+Every run of the `Deploy` workflow on `main` fails on the same step
+(`gh-axi run list --workflow=deploy.yml`): `CLOUDFLARE_API_TOKEN` is not set as
+a repo secret (`gh-axi secret list` returns none). Production is real and
+live regardless (see the custom domain section below) because every deploy so
+far has been pushed by hand with `wrangler deploy` from a machine that has the
+token locally. Do not treat a green CI run as the signal that a change is
+live, and do not add work that depends on this workflow succeeding without
+confirming the secret has been set.
+
 ## The account is on Workers Free, and `wrangler.jsonc` must stay deployable on it
 
 Production runs on the Workers Free plan deliberately: it is the only Cloudflare
@@ -103,7 +114,10 @@ public repository is the failure this product cannot afford.
 ## Publication
 
 No verdict on a third-party repository is published until the dispute policy
-exists. That means no public index and no seeded rows. See `docs/seed-dataset.md`.
+exists. That means no public index and no seeded rows, with one deliberate,
+narrow exception: the hardcoded `SHOWCASE` array (`src/ui/pages.ts`) puts a
+handful of favourable-or-neutral example reports on the landing page. See
+`docs/seed-dataset.md` for the policy and the carve-out it permits.
 
 ## Maintaining this file
 
