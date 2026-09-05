@@ -50,6 +50,7 @@ export default {
         message: "That address does not correspond to a page or a report.",
         contact: config.contact,
         status: 404,
+        path: url.pathname,
       });
     } catch {
       return messagePage({
@@ -59,6 +60,7 @@ export default {
           "The analysis did not complete. Nothing was published. Trying again in a moment is reasonable.",
         contact: config.contact,
         status: 500,
+        path: url.pathname,
       });
     }
   },
@@ -253,6 +255,7 @@ async function handleVerdictLookup(
         "Nothing has been analysed at that address. Submit the repository from the front page and one will be generated.",
       contact: config.contact,
       status: 404,
+      path: url.pathname,
     });
   }
 
@@ -274,7 +277,7 @@ async function handleVerdictLookup(
     );
   }
 
-  return verdictPage(stored, config.contact);
+  return verdictPage(stored, config.contact, Boolean(match.sha));
 }
 
 function redirect(location: string): Response {
