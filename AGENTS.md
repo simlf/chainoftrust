@@ -63,6 +63,16 @@ OpenAI-compatible wire shape, so a new provider needs the same proof.
    `install-path:*` concern ids in `index.ts` silently breaks the schematic
    with no type error; `test/elevation.test.ts` is what would catch it.
 
+## There is no production deployment yet
+
+Every run of `.github/workflows/deploy.yml` on `main` has failed
+(`gh-axi run list --workflow=deploy.yml`), all on the same step: `CLOUDFLARE_API_TOKEN`
+is not set (`gh-axi secret list` returns none). `chainoftrust.dev` does not
+resolve. Do not assume a live site exists, and do not treat "POST /analyse on
+the live site" instructions as executable until someone confirms the secret
+is set and a deploy has gone green. Verify locally instead: `npm run
+db:migrate:local`, `npm run dev`, then POST to `http://localhost:8787/analyse`.
+
 ## The account is on Workers Free, and `wrangler.jsonc` must stay deployable on it
 
 Production runs on the Workers Free plan deliberately: it is the only Cloudflare
