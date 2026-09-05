@@ -113,7 +113,7 @@ export function elevationSchematic(r: Report): string {
   const residency = worstSlot(findings, RESIDENCY_CONCERNS);
   const sudo = worstSlot(findings, [SUDO_CONCERN]);
 
-  const checksumSevered = checksum.severity !== "clean";
+  const checksumSevered = checksum.severity === "warning" || checksum.severity === "critical";
 
   const releaseColor = COLORS.dim;
   const installerColor = colorFor(sudo.severity);
