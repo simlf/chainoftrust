@@ -165,6 +165,13 @@ absent degrades behaviour rather than breaking it. Without `RATE_LIMIT_SALT`
 the rate limiter's IP digests are salted with the UTC day alone, which rotates
 them daily but leaves them enumerable by anyone who can read the table.
 
+## For agents
+
+`GET /llms.txt` is a plain-text summary of everything below, written for a
+model reading it directly: the URL shapes, what the verdict tiers mean, and
+an explicit section on what is not checked. Point an assistant at it before
+asking it to check chainoftrust for a package.
+
 ## The API
 
 Verdicts are public and machine-readable, so an agent can read one before
@@ -180,9 +187,13 @@ A report on an npm or PyPI package carries a `?pkg=npm:name@version` (or
 `pypi:`) qualifier on its pinned URL, because one commit can back several
 published packages.
 
-Add `?format=json` to any report URL. JSON responses are CORS-open and cached
-for an hour. Reports are generated on submission from the site, not on demand
-from the API, so an unanalysed target returns 404 rather than triggering work.
+Add `?format=json` to any report URL, or send `Accept: application/json` on a
+plain report URL. JSON responses are CORS-open and cached for an hour. Reports
+are generated on submission from the site, not on demand from the API, so an
+unanalysed target returns 404 rather than triggering work; that 404 body
+names the form that starts an analysis and notes that submitting one costs
+the operator real money, so an agent should prefer an existing report over
+triggering a new one and never script repeated submissions.
 
 ### Badge
 
