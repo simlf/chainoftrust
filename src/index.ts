@@ -4,6 +4,7 @@ import { Fetcher } from "./lib/fetcher";
 import { decodeSegments, InvalidTarget, parseTarget } from "./lib/target";
 import { hashIp, Store, utcDay, type RateLimitResult } from "./store";
 import type { Report, StoredVerdict } from "./types";
+import { badgeSvg } from "./ui/badge";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
 import { buildReport } from "./verdict/score";
 import { writeUp } from "./verdict/writeup";
@@ -61,6 +62,11 @@ export default {
 
       if (request.method === "POST" && url.pathname === "/analyse") {
         return await handleAnalyse(request, store, config);
+      }
+
+      const badge = matchBadgePath(url.pathname);
+      if (request.method === "GET" && badge) {
+        return await handleBadge(store, badge);
       }
 
       const verdict = matchVerdictPath(url.pathname);
@@ -260,6 +266,51 @@ function reanalysisTooSoonPage(sha: string, waitMs: number, config: Config): Res
     message: `The report at commit ${sha.slice(0, 7)} is the most recent one on file for this repository, and refreshing it again is not available for about ${minutes} more minute${minutes === 1 ? "" : "s"}. This floor exists so a busy repository cannot be used to spend fresh analyses by hammering the refresh action. The existing report is still readable at its own address.`,
     contact: config.contact,
     status: 429,
+  });
+}
+
+interface BadgeMatch {
+  owner: string;
+  name: string;
+}
+
+/** /badge/github/:owner/:name.svg — repo-scoped, never pinned to a commit. */
+function matchBadgePath(pathname: string): BadgeMatch | null {
+  const parts = decodeSegments(pathname);
+  if (!parts) return null;
+  if (parts[0] !== "badge" || parts[1] !== "github") return null;
+  const owner = parts[2];
+  const file = parts[3];
+  if (!owner || !file || !file.endsWith(".svg")) return null;
+  const name = file.slice(0, -".svg".length);
+  return name ? { owner, name } : null;
+}
+
+/**
+ * One D1 read, the same lookup the repo-latest report route uses. Never
+ * triggers an analysis: a repository with no report on file gets an honest
+ * "not analyzed" badge linking to the intake form, not a spent slot. This is
+ * what makes a bare README embed safe to let anyone's browser fetch, with no
+ * rate limit and no submission counter touched.
+ */
+async function handleBadge(store: Store, match: BadgeMatch): Promise<Response> {
+  const stored = await store.getLatestForRepo(match.owner, match.name);
+  const svg = stored
+    ? badgeSvg({ verdict: stored.report.verdict, href: verdictPath(stored.report) })
+    : badgeSvg({ href: "/" });
+
+  return new Response(svg, {
+    status: 200,
+    headers: {
+      "content-type": "image/svg+xml; charset=utf-8",
+      // A found badge only changes when a new report replaces it, which the
+      // refresh floor (MIN_REANALYSIS_INTERVAL_MS) already holds to an hour,
+      // so an hour of caching never shows a badge staler than the data behind
+      // it could be anyway. The not-analyzed case is cached for far less,
+      // since the very next thing that could happen to it is someone running
+      // the analysis this badge just linked them to.
+      "cache-control": stored ? "public, max-age=3600" : "public, max-age=60",
+    },
   });
 }
 

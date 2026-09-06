@@ -163,6 +163,35 @@ narrow exception: the hardcoded `SHOWCASE` array (`src/ui/pages.ts`) puts a
 handful of favourable-or-neutral example reports on the landing page. See
 `docs/seed-dataset.md` for the policy and the carve-out it permits.
 
+## The badge route is a no-spend surface by construction
+
+`GET /badge/github/:owner/:name.svg` (`src/ui/badge.ts`, routed in
+`src/index.ts`) is the one route a stranger's README can point browsers at
+with zero rate limiting: it does one `store.getLatestForRepo` read, never
+`resolveTarget`s against GitHub, and never touches the submission or analysis
+counters. A repository with no report gets an honest "not analyzed" badge
+linking to the intake form, not a 404 and not a triggered analysis. Any change
+to this handler that adds a second D1 call or a rate-limit check has probably
+broken the "any number of embeds cost nothing" guarantee `test/badge.test.ts`
+proves behaviourally (a fake D1 that throws on any query outside that one
+read). The badge is deliberately repo-scoped, not commit-pinned like a report
+URL, so its `Cache-Control` is a plain hour/minute split (found/not-found)
+rather than the SHA-pinned `immutable`-style caching report pages use.
+
+## `npm run dev` does not currently boot locally
+
+`wrangler dev` (v4.120.0, this repo's pinned version) fails on `main` itself,
+before any change in this task: `Uncaught TypeError: Incorrect type for map
+entry 'MIN_REANALYSIS_INTERVAL_MS': the provided value is not of type
+'function or ExportedHandler'` — it appears to choke on `src/index.ts`
+exporting a named constant alongside the default `ExportedHandler`. Confirmed
+by stashing all changes and re-running; the error is identical on a clean
+checkout. This blocks the "run it live" verification step this file otherwise
+asks for. Don't spend time attributing this to your own change without first
+checking it reproduces on `main` with nothing stashed; `vitest` exercises the
+same `src/index.ts` fetch handler against a fake D1 and is the fallback proof
+until this is fixed or the pinned wrangler version is upgraded.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
