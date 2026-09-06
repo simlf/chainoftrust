@@ -71,7 +71,11 @@ const PROBES: Probe[] = [
     severity: "warning",
   },
   {
-    pattern: /\b(curl|wget|irm)\b[^\n]{0,80}\|\s*(sudo\s+)?(ba|z)?sh\b/i,
+    // Requires an actual argument between the command and the pipe (a URL, a
+    // flag, anything but bare whitespace) so a sentence that only names the
+    // pattern as a category ("`curl | sh` installers") does not match: that is
+    // a mention, not an instruction to run one.
+    pattern: /\b(curl|wget|irm)\b\s+[^\s|][^\n]{2,80}\|\s*(sudo\s+)?(ba|z)?sh\b/i,
     reason: "the documentation advertises piping a downloaded script straight into a shell",
     severity: "warning",
   },
