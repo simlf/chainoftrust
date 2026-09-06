@@ -202,6 +202,12 @@ describe("the curated showcase on the homepage", () => {
     }
   });
 
+  it("includes the site's own self-analysis now that the repository is public", () => {
+    const self = SHOWCASE.find((s) => s.owner === "simlf" && s.name === "chainoftrust");
+    expect(self).toBeDefined();
+    expect(self!.sha).toMatch(/^[0-9a-f]{40}$/);
+  });
+
   it("frames the list as curated examples, never as a complete or live index", async () => {
     const body = await homePage({ contact: "test@example.com" }).text();
     expect(body).toContain("Example reports, not an index");

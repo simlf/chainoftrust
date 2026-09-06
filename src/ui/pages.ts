@@ -25,9 +25,8 @@ import { esc, page } from "./layout";
  * added here, and adding an entry is always a human, code-reviewed decision,
  * never something a submission can cause on its own.
  *
- * The site's own analysis belongs here once chainoftrust itself is public;
- * until then it would 404 (the repository is private), so it stays out
- * rather than shipping a dead link. Adding it later is one entry.
+ * The site's own analysis is one entry here, now that chainoftrust itself is
+ * public: it is the transparency flex, the scanner publishing its own verdict.
  */
 export interface ShowcaseEntry {
   owner: string;
@@ -37,6 +36,12 @@ export interface ShowcaseEntry {
 }
 
 export const SHOWCASE: ShowcaseEntry[] = [
+  {
+    owner: "simlf",
+    name: "chainoftrust",
+    sha: "1cbaaa0991c95cddd83b16309b2e41618500ff69",
+    note: "The site analysing itself: the transparency flex. Its own README names curl|sh installers as one of the patterns it looks for, and no probe here mistakes that mention for an instruction.",
+  },
   {
     owner: "ollama",
     name: "ollama",
