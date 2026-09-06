@@ -274,7 +274,7 @@ interface BadgeMatch {
   name: string;
 }
 
-/** /badge/github/:owner/:name.svg — repo-scoped, never pinned to a commit. */
+/** /badge/github/:owner/:name.svg, repo-scoped, never pinned to a commit. */
 function matchBadgePath(pathname: string): BadgeMatch | null {
   const parts = decodeSegments(pathname);
   if (!parts) return null;

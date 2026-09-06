@@ -183,7 +183,7 @@ rather than the SHA-pinned `immutable`-style caching report pages use.
 `wrangler dev` (v4.120.0, this repo's pinned version) fails on `main` itself,
 before any change in this task: `Uncaught TypeError: Incorrect type for map
 entry 'MIN_REANALYSIS_INTERVAL_MS': the provided value is not of type
-'function or ExportedHandler'` — it appears to choke on `src/index.ts`
+'function or ExportedHandler'`. It appears to choke on `src/index.ts`
 exporting a named constant alongside the default `ExportedHandler`. Confirmed
 by stashing all changes and re-running; the error is identical on a clean
 checkout. This blocks the "run it live" verification step this file otherwise
