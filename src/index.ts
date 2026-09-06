@@ -2,6 +2,7 @@ import { collect, resolveTarget, TargetNotFound } from "./collect";
 import { readConfig, type Config, type Env } from "./env";
 import { Fetcher } from "./lib/fetcher";
 import { decodeSegments, InvalidTarget, parseTarget } from "./lib/target";
+import { LLMS_TXT } from "./llms-txt";
 import { hashIp, Store, utcDay, type RateLimitResult } from "./store";
 import type { Report, StoredVerdict } from "./types";
 import { badgeSvg } from "./ui/badge";
@@ -60,6 +61,15 @@ export default {
         return new Response("ok", { headers: { "content-type": "text/plain" } });
       }
 
+      if (request.method === "GET" && url.pathname === "/llms.txt") {
+        return new Response(LLMS_TXT, {
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          },
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/analyse") {
         return await handleAnalyse(request, store, config);
       }
@@ -71,7 +81,7 @@ export default {
 
       const verdict = matchVerdictPath(url.pathname);
       if (request.method === "GET" && verdict) {
-        return await handleVerdictLookup(url, store, config, verdict);
+        return await handleVerdictLookup(request, url, store, config, verdict);
       }
 
       return messagePage({
@@ -336,14 +346,28 @@ function matchVerdictPath(pathname: string): VerdictMatch | null {
   return sha ? { owner, name, sha } : { owner, name };
 }
 
+/**
+ * A browser's Accept header lists text/html; a curl/agent asking for JSON
+ * plainly does not, so this is cheap to tell apart without a full parse.
+ * Query param and /api/ path stay the primary, documented ways in; this is a
+ * nicety layered on top for a client that only sets the header.
+ */
+function acceptsJson(request: Request): boolean {
+  const accept = request.headers.get("accept") ?? "";
+  return accept.includes("application/json") && !accept.includes("text/html");
+}
+
 async function handleVerdictLookup(
+  request: Request,
   url: URL,
   store: Store,
   config: Config,
   match: VerdictMatch,
 ): Promise<Response> {
   const wantsJson =
-    url.searchParams.get("format") === "json" || url.pathname.startsWith("/api/");
+    url.searchParams.get("format") === "json" ||
+    url.pathname.startsWith("/api/") ||
+    acceptsJson(request);
 
   const stored: StoredVerdict | null = match.sha
     ? await store.getVerdictForQuery(
@@ -361,6 +385,10 @@ async function handleVerdictLookup(
           error: "not_analysed",
           message:
             "No report exists for this target yet. Reports are generated on request from the site.",
+          how_to_analyse:
+            "POST target=<repository URL, owner/repo, or npm:/pypi: package> as form data to https://chainoftrust.dev/analyse",
+          note:
+            "That POST costs the site operator real money (an upstream fetch, usually a model call). Prefer an existing report over triggering a new one, and do not script repeated submissions.",
         },
         404,
       );
