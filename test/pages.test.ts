@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, Report, StoredVerdict } from "../src/types";
-import { homePage, SHOWCASE, verdictPage } from "../src/ui/pages";
+import { homePage, SHOWCASE, shareIntentUrl, verdictPage } from "../src/ui/pages";
 import { scoreVerdict } from "../src/verdict/score";
 
 function report(findings: Finding[]): Report {
@@ -55,6 +55,40 @@ const f = (over: Partial<Finding>): Finding => ({
   evidence: "install.sh:1",
   method: "file",
   ...over,
+});
+
+describe("shareIntentUrl", () => {
+  it("builds an X intent URL carrying repo, verdict and report URL", () => {
+    const url = shareIntentUrl("owner/repo", "Clean", "https://chainoftrust.dev/r/owner/repo/abc1234");
+    expect(url.startsWith("https://twitter.com/intent/tweet?")).toBe(true);
+    const params = new URL(url).searchParams;
+    expect(params.get("url")).toBe("https://chainoftrust.dev/r/owner/repo/abc1234");
+    expect(params.get("text")).toBe(
+      "owner/repo: Clean - https://chainoftrust.dev/r/owner/repo/abc1234",
+    );
+  });
+
+  it("percent-encodes special characters in the repo name and text", () => {
+    const url = shareIntentUrl("owner/repo & co", "Do not install", "https://chainoftrust.dev/x");
+    expect(url).not.toContain("&co");
+    expect(url).not.toMatch(/text=[^&]*&(?!$)co/);
+    const params = new URL(url).searchParams;
+    expect(params.get("text")).toBe("owner/repo & co: Do not install - https://chainoftrust.dev/x");
+  });
+
+  it("never emits an em dash", () => {
+    const url = shareIntentUrl("owner/repo", "Warnings", "https://chainoftrust.dev/x");
+    expect(url).not.toContain("—");
+  });
+});
+
+describe("the share-on-X affordance", () => {
+  it("renders a pure anchor pointing at the X intent endpoint, no inline JS", async () => {
+    const page = await html([f({ severity: "clean" })]);
+    expect(page).toContain("Share on X");
+    expect(page).toMatch(/<a href="https:\/\/twitter\.com\/intent\/tweet\?[^"]*" target="_blank"/);
+    expect(page).not.toContain("onclick");
+  });
 });
 
 describe("the chain of trust drawing", () => {
