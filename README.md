@@ -184,6 +184,26 @@ Add `?format=json` to any report URL. JSON responses are CORS-open and cached
 for an hour. Reports are generated on submission from the site, not on demand
 from the API, so an unanalysed target returns 404 rather than triggering work.
 
+### Badge
+
+An embeddable verdict badge, for a README:
+
+```
+GET /badge/github/:owner/:name.svg
+```
+
+```md
+[![chainoftrust](https://chainoftrust.dev/badge/github/OWNER/REPO.svg)](https://chainoftrust.dev/r/github/OWNER/REPO)
+```
+
+Drawn deterministically from the same tier data the report page's
+chain-of-trust drawing reads (`src/ui/pages.ts`), one D1 read, no client-side
+script. A repository with no report yet gets an honest "not analyzed" badge
+linking to the intake form instead of the report; fetching the badge never
+starts an analysis, so a README embed can be viewed by any number of visitors
+at zero cost. Cached an hour once a verdict exists, a minute otherwise, since
+the not-analyzed case is the one most likely to change soon.
+
 ## Design decisions
 
 **A plain Worker with server-rendered HTML, not SvelteKit.** Two pages, one
