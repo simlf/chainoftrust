@@ -225,7 +225,7 @@ describe("competitive positioning on the homepage", () => {
 describe("the curated showcase on the homepage", () => {
   it("holds a handful of entries, never zero and never a sprawling index", () => {
     expect(SHOWCASE.length).toBeGreaterThanOrEqual(3);
-    expect(SHOWCASE.length).toBeLessThanOrEqual(5);
+    expect(SHOWCASE.length).toBeLessThanOrEqual(6);
   });
 
   it("names a distinct repository per entry, each pinned to a full commit sha", () => {

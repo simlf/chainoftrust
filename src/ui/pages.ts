@@ -66,6 +66,12 @@ export const SHOWCASE: ShowcaseEntry[] = [
     sha: "d73f99efbfd40c3aa1b61e88728b3d49fb52608f",
     note: "An MCP server registration, and a package manifest with no install-time lifecycle scripts at all.",
   },
+  {
+    owner: "kunchenguid",
+    name: "firstmate",
+    sha: "51d2e8c902bb8785093969f8ba738c7355a283e0",
+    note: "The repo that started this: the tool exists because its own maintainer hesitated before installing it. Three Claude Code hook manifests reach a harness before any install step.",
+  },
 ];
 
 function showcase(): string {
