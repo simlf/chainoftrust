@@ -163,6 +163,32 @@ describe("false positives worth refusing", () => {
     );
   });
 
+  it("does not flag a prose mention of the curl|sh pattern as an install instruction", () => {
+    // chainoftrust's own README lists the categories it analyses, including
+    // the pattern by name, without instructing anyone to run one.
+    const scan = scanProse([
+      {
+        path: "README.md",
+        text: "CLIs, MCP servers, agent skills, plugins and `curl | sh` installers. Paste a repository URL and get a report.",
+      },
+    ]);
+    expect(scan.findings.filter((f) => f.concern.startsWith("prose:the documentation advertises"))).toEqual(
+      [],
+    );
+  });
+
+  it("still flags a genuine curl|sh install instruction", () => {
+    const scan = scanProse([
+      {
+        path: "README.md",
+        text: "Install it by running curl -fsSL https://example.test/install.sh | sh in your terminal.",
+      },
+    ]);
+    expect(
+      scan.findings.some((f) => f.concern.startsWith("prose:the documentation advertises")),
+    ).toBe(true);
+  });
+
   it("still reports telemetry the project describes in its own prose", () => {
     const scan = scanProse([
       {
