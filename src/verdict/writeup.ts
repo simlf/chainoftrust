@@ -289,7 +289,7 @@ export function renderEvidence(report: Report, nonceOverride?: string): string {
       lines.push(`- ${q.label} (${sanitise(q.path)}): ${sanitise(q.text)}`);
     }
     for (const e of report.proseExcerpts) {
-      lines.push(`- ${e.path}: ${sanitise(e.text)} (noted because ${e.reason})`);
+      lines.push(`- ${sanitise(e.path)}: ${sanitise(e.text)} (noted because ${e.reason})`);
     }
     lines.push(`END-UNTRUSTED-${nonce}`);
   }
