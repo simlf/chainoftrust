@@ -172,7 +172,7 @@ describe("false positives worth refusing", () => {
         text: "CLIs, MCP servers, agent skills, plugins and `curl | sh` installers. Paste a repository URL and get a report.",
       },
     ]);
-    expect(scan.findings.filter((f) => f.concern.startsWith("prose:the documentation advertises"))).toEqual(
+    expect(scan.findings.filter((f) => f.concern!.startsWith("prose:the documentation advertises"))).toEqual(
       [],
     );
   });
@@ -185,7 +185,7 @@ describe("false positives worth refusing", () => {
       },
     ]);
     expect(
-      scan.findings.some((f) => f.concern.startsWith("prose:the documentation advertises")),
+      scan.findings.some((f) => f.concern!.startsWith("prose:the documentation advertises")),
     ).toBe(true);
   });
 
