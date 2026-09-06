@@ -310,7 +310,7 @@ footer { margin-top: 1.5rem; font-size: 0.74rem; color: var(--dim); }
 .fence .note { font-size: 0.7rem; color: var(--dim); padding: 0 1.2rem 0.9rem; margin: 0; }
 `;
 
-const SITE_URL = "https://chainoftrust.dev";
+export const SITE_URL = "https://chainoftrust.dev";
 const DEFAULT_DESCRIPTION =
   "Install-time trust reports for agent-facing tooling. Paste a repository URL and see what installing it would actually do.";
 

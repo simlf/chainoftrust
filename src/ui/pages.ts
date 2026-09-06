@@ -2,7 +2,7 @@ import { registryQualifierFor } from "../lib/target";
 import type { CheckId, Finding, Report, Severity, StoredVerdict } from "../types";
 import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
 import { elevationSchematic } from "./elevation";
-import { esc, page } from "./layout";
+import { esc, page, SITE_URL } from "./layout";
 
 /**
  * A curated, hardcoded set of example reports, never a public index. Each
@@ -245,6 +245,7 @@ ${
   <div class="tb"><div class="k">Generated</div><div class="v">${esc(r.generatedAt.slice(0, 19).replace("T", " "))} UTC${stored.cached ? " &middot; served from cache" : ""}</div></div>
   <div class="tb"><div class="k">Verdict</div><div class="v">arithmetic over distinct concerns, recomputable by anyone</div></div>
   <div class="tb"><div class="k">Formats</div><div class="v"><a href="${esc(verdictJsonPath(r))}">JSON</a> &middot; <a href="/">new survey</a></div></div>
+  <div class="tb"><div class="k">Share</div><div class="v"><a href="${esc(shareIntentUrl(repo, VERDICT_LABEL[r.verdict], `${SITE_URL}${verdictPath(r)}`))}" target="_blank" rel="noopener noreferrer">Share on X</a></div></div>
 </div>`;
 
   return page({
@@ -427,6 +428,18 @@ ${labels.join("\n")}
  * so the plain /r/github/:owner/:name/:sha route keeps resolving, while an npm
  * and a PyPI report on the same commit stay distinguishable.
  */
+/**
+ * Builds an X (Twitter) share-intent URL for a report. Zero client JS: this
+ * is a pure anchor href, and the intent endpoint does its own escaping of the
+ * query string, so all we owe it is standard URI-component encoding. Text is
+ * deliberately plain: repo name, verdict word, report URL, no adjectives.
+ */
+export function shareIntentUrl(repo: string, verdictLabel: string, reportUrl: string): string {
+  const text = `${repo}: ${verdictLabel} - ${reportUrl}`;
+  const params = new URLSearchParams({ url: reportUrl, text });
+  return `https://twitter.com/intent/tweet?${params.toString()}`;
+}
+
 export function verdictPath(r: Report): string {
   const path = `/r/github/${encodeURIComponent(r.target.owner)}/${encodeURIComponent(r.target.name)}/${encodeURIComponent(r.target.sha)}`;
   const reg = r.target.registry;
