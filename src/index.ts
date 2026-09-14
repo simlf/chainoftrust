@@ -35,8 +35,41 @@ const SUBMISSIONS_PER_DAY = 100;
  */
 export const MIN_REANALYSIS_INTERVAL_MS = 60 * 60 * 1000;
 
+/**
+ * Crawlers are welcome on the report pages: a shared report link is the whole
+ * growth loop, so /r/ is allowed explicitly rather than by omission. /analyse
+ * is POST-only and costs the operator real work, so it is named as off-limits.
+ */
+const ROBOTS_TXT = `User-agent: *
+Allow: /r/
+Disallow: /analyse
+`;
+
+/**
+ * The Cache API only exists inside the Workers runtime; under vitest's plain
+ * Node environment there is no `caches` global, and every request simply takes
+ * the uncached path it takes today.
+ */
+function edgeCache(): Cache | null {
+  return typeof caches === "undefined" ? null : caches.default;
+}
+
+/**
+ * The same URL answers with HTML or JSON depending on the Accept header, and
+ * the Cache API keys on URL alone, so the negotiated format has to be folded
+ * into the key or a cached HTML page would be served to an agent that asked
+ * for JSON. Normalising `format` into the query does that: every other
+ * verdict-relevant input (owner, name, sha, pkg, newer) is already in the URL.
+ */
+function verdictCacheKey(url: URL, wantsJson: boolean): Request {
+  const keyUrl = new URL(url.toString());
+  if (wantsJson) keyUrl.searchParams.set("format", "json");
+  else keyUrl.searchParams.delete("format");
+  return new Request(keyUrl.toString(), { method: "GET" });
+}
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
     const config = readConfig(env);
     const url = new URL(request.url);
 
@@ -70,6 +103,15 @@ export default {
         });
       }
 
+      if (request.method === "GET" && url.pathname === "/robots.txt") {
+        return new Response(ROBOTS_TXT, {
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "cache-control": "public, max-age=3600",
+          },
+        });
+      }
+
       if (request.method === "POST" && url.pathname === "/analyse") {
         return await handleAnalyse(request, store, config);
       }
@@ -81,6 +123,28 @@ export default {
 
       const verdict = matchVerdictPath(url.pathname);
       if (request.method === "GET" && verdict) {
+        // Only the SHA-pinned form goes near the edge cache: its content is
+        // immutable by construction (the report is keyed by commit SHA), so a
+        // hit can be served without touching D1 at all. The repo-latest form
+        // is mutable and is never cached.
+        if (verdict.sha) {
+          const cache = edgeCache();
+          const key = verdictCacheKey(url, wantsJsonFor(request, url));
+          if (cache) {
+            const hit = await cache.match(key);
+            if (hit) return hit;
+          }
+          const res = await handleVerdictLookup(request, url, store, config, verdict);
+          // Anything but a 200 (a missing report, an error page) is a state
+          // that can change the moment someone runs the analysis, so only the
+          // immutable success is ever put.
+          if (cache && res.status === 200) {
+            const put = cache.put(key, res.clone()).catch(() => {});
+            if (ctx) ctx.waitUntil(put);
+            else await put;
+          }
+          return res;
+        }
         return await handleVerdictLookup(request, url, store, config, verdict);
       }
 
@@ -357,6 +421,14 @@ function acceptsJson(request: Request): boolean {
   return accept.includes("application/json") && !accept.includes("text/html");
 }
 
+function wantsJsonFor(request: Request, url: URL): boolean {
+  return (
+    url.searchParams.get("format") === "json" ||
+    url.pathname.startsWith("/api/") ||
+    acceptsJson(request)
+  );
+}
+
 async function handleVerdictLookup(
   request: Request,
   url: URL,
@@ -364,10 +436,7 @@ async function handleVerdictLookup(
   config: Config,
   match: VerdictMatch,
 ): Promise<Response> {
-  const wantsJson =
-    url.searchParams.get("format") === "json" ||
-    url.pathname.startsWith("/api/") ||
-    acceptsJson(request);
+  const wantsJson = wantsJsonFor(request, url);
 
   const stored: StoredVerdict | null = match.sha
     ? await store.getVerdictForQuery(
