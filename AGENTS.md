@@ -192,6 +192,18 @@ read). The badge is deliberately repo-scoped, not commit-pinned like a report
 URL, so its `Cache-Control` is a plain hour/minute split (found/not-found)
 rather than the SHA-pinned `immutable`-style caching report pages use.
 
+## Edge cache keys must encode content negotiation
+
+The SHA-pinned verdict route is edge-cached with the Cache API in
+`src/index.ts` (`edgeCache`/`verdictCacheKey`), and the Cache API keys on URL
+alone while the same URL answers HTML or JSON depending on the Accept header.
+`verdictCacheKey` folds the negotiated format into the key's query string;
+any new header-dependent variation on that route needs the same treatment or
+one format's cached body gets served to the other's clients. Only 200s on the
+SHA-pinned form are ever put; the repo-latest route, 404s and error pages are
+mutable and stay uncached (`test/edge-cache.test.ts` proves all of it against
+a fake D1 that counts reads).
+
 ## `npm run dev` does not currently boot locally
 
 `wrangler dev` (v4.120.0, this repo's pinned version) fails on `main` itself,

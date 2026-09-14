@@ -342,6 +342,10 @@ export function page(opts: {
 
   const description = opts.description ?? DEFAULT_DESCRIPTION;
   const url = `${SITE_URL}${opts.path ?? "/"}`;
+  // Error and notice pages are not canonical anything; only a page that
+  // answers 200 names itself as the address search engines should keep.
+  const canonical =
+    (opts.status ?? 200) === 200 ? `\n<link rel="canonical" href="${esc(url)}">` : "";
 
   const html = `<!doctype html>
 <html lang="en">
@@ -349,7 +353,7 @@ export function page(opts: {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${esc(opts.title)}</title>
-<meta name="description" content="${esc(description)}">
+<meta name="description" content="${esc(description)}">${canonical}
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="chainoftrust.dev">
 <meta property="og:title" content="${esc(opts.title)}">

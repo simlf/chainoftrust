@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Finding, Report, StoredVerdict } from "../src/types";
-import { homePage, SHOWCASE, shareIntentUrl, verdictPage } from "../src/ui/pages";
+import { homePage, messagePage, SHOWCASE, shareIntentUrl, verdictPage } from "../src/ui/pages";
 import { scoreVerdict } from "../src/verdict/score";
 
 function report(findings: Finding[]): Report {
@@ -192,6 +192,32 @@ describe("Open Graph and Twitter Card meta", () => {
       '<meta property="og:url" content="https://chainoftrust.dev/r/github/owner/repo/abc1234abc1234abc1234abc1234abc1234abc12">',
     );
     expect(body).toMatch(/<meta property="og:description" content="owner\/repo at abc1234[^"]+">/);
+  });
+});
+
+describe("the canonical link", () => {
+  it("names the site root on the homepage", async () => {
+    const body = await homePage({ contact: "test@example.com" }).text();
+    expect(body).toContain('<link rel="canonical" href="https://chainoftrust.dev/">');
+  });
+
+  it("names the report's own SHA-pinned address on a verdict page", async () => {
+    const body = await verdictPage(stored([f({})]), "test@example.com").text();
+    expect(body).toContain(
+      '<link rel="canonical" href="https://chainoftrust.dev/r/github/owner/repo/abc1234abc1234abc1234abc1234abc1234abc12">',
+    );
+  });
+
+  it("is absent on a page that does not answer 200", async () => {
+    const body = await messagePage({
+      title: "No report yet - chainoftrust.dev",
+      heading: "No report for that yet",
+      message: "Nothing has been analysed at that address.",
+      contact: "test@example.com",
+      status: 404,
+      path: "/r/github/o/none",
+    }).text();
+    expect(body).not.toContain('rel="canonical"');
   });
 });
 
