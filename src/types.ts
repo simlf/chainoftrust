@@ -47,6 +47,28 @@ export interface Finding {
    * embellish a grep hit into a conclusion.
    */
   method: "file" | "api" | "registry" | "tree" | "prose";
+  /**
+   * The cited file as the collector read it, for the report page's "show the
+   * code" toggle. Present only when the cited file was one of the files this
+   * analysis fetched; reports stored before it existed render a link alone.
+   * Like a quote, the excerpt is target bytes: it never reaches the write-up
+   * model and is escaped wherever it is rendered.
+   */
+  source?: SourceExcerpt;
+}
+
+export interface SourceExcerpt {
+  /** Repository path at the pinned commit, exactly as cited in `evidence`. */
+  path: string;
+  /** The lines the finding is about, 1-based. Empty when it is about the whole file. */
+  lines: number[];
+  excerpt: ExcerptHunk[];
+}
+
+/** A run of consecutive lines from a fetched file, starting at line `start`. */
+export interface ExcerptHunk {
+  start: number;
+  lines: string[];
 }
 
 /** Something the analysis deliberately did not establish. */
