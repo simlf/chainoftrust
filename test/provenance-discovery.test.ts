@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { collect } from "../src/collect/index";
 import { cacheKeyFor } from "../src/lib/target";
-import type { Evidence, RepoMeta } from "../src/types";
+import type { Evidence, RegistryRef, RepoMeta } from "../src/types";
 import { REA_AGENTS, REA_AGENTS_TOKEN_PUBLISHED } from "./fixtures/registry";
 
 /**
@@ -65,16 +65,20 @@ function fakeFetcher(files: Record<string, string>, registry: Record<string, unk
   };
 }
 
-async function collectRepo(f: ReturnType<typeof fakeFetcher>): Promise<Evidence> {
+async function collectRepo(
+  f: ReturnType<typeof fakeFetcher>,
+  registry?: RegistryRef,
+): Promise<Evidence> {
   return collect(f as never, {
     target: {
-      cacheKey: cacheKeyFor(OWNER, NAME, SHA),
+      cacheKey: cacheKeyFor(OWNER, NAME, SHA, registry),
       host: "github",
       owner: OWNER,
       name: NAME,
       requestedRef: "",
       sha: SHA,
       defaultBranch: "main",
+      ...(registry ? { registry } : {}),
     },
     meta,
   });
@@ -111,13 +115,18 @@ describe("registry provenance on a repository submission", () => {
     expect(publisher?.evidence).toBe("registry.npmjs.org/rea-agents _npmUser.trustedPublisher");
   });
 
-  it("reports absence exactly as a package submission does today", async () => {
+  /**
+   * Most published packages carry no provenance. A repository submission gains
+   * the positive signal when it is there, but its absence must not turn a
+   * clean repository's verdict into warnings.
+   */
+  it("reports absence as a note, so no repository's verdict gets worse", async () => {
     const evidence = await collectRepo(
       fakeFetcher(REA_FILES, { "rea-agents": REA_AGENTS_TOKEN_PUBLISHED }),
     );
 
     const attestation = finding(evidence, "registry-provenance:attestation");
-    expect(attestation?.severity).toBe("warning");
+    expect(attestation?.severity).toBe("note");
     expect(attestation?.statement).toContain("carries no provenance attestation");
     expect(attestation?.evidence).toBe("registry.npmjs.org/rea-agents dist.attestations");
 
@@ -125,6 +134,29 @@ describe("registry provenance on a repository submission", () => {
     expect(publisher?.severity).toBe("note");
     expect(publisher?.statement).toContain("long-lived publish token");
     expect(publisher?.evidence).toBe("registry.npmjs.org/rea-agents _npmUser");
+  });
+
+  it("still scores absence as a warning when the submission named the package", async () => {
+    const evidence = await collectRepo(
+      fakeFetcher({}, { "rea-agents": REA_AGENTS_TOKEN_PUBLISHED }),
+      { kind: "npm", packageName: "rea-agents", version: "6.5.0" },
+    );
+
+    const attestation = finding(evidence, "registry-provenance:attestation");
+    expect(attestation?.severity).toBe("warning");
+    expect(attestation?.statement).toContain("carries no provenance attestation");
+  });
+
+  /**
+   * The report is pinned to a commit; the registry's provenance is for its
+   * latest version, which may have been built from a different one.
+   */
+  it("says the latest published version was not matched to this commit", async () => {
+    const evidence = await collectRepo(fakeFetcher(REA_FILES, { "rea-agents": REA_AGENTS }));
+
+    expect(evidence.notChecked.join("\n")).toContain(
+      "latest published version of rea-agents (6.5.0) was built from this commit was not verified",
+    );
   });
 
   /**
@@ -147,7 +179,7 @@ describe("registry provenance on a repository submission", () => {
     expect(evidence.findings.filter((f) => f.check === "registry-provenance")).toEqual([]);
     expect(finding(evidence, "trust-root:publish-rights")).toBeUndefined();
     expect(evidence.notChecked.join("\n")).toContain(
-      "does not point back at this repository",
+      "A package named rea-agents exists on npm but does not point back at this repository",
     );
   });
 
@@ -188,5 +220,13 @@ describe("registry provenance on a repository submission", () => {
     const attestation = finding(evidence, "registry-provenance:attestation");
     expect(attestation?.severity).toBe("clean");
     expect(attestation?.evidence).toBe("pypi.org/pypi/rea-py/json urls[].provenance");
+
+    const unattested = await collectRepo(
+      fakeFetcher(
+        { "pyproject.toml": pyproject },
+        { "rea-py": { ...pypi, urls: [{ has_sig: false, provenance: null }] } },
+      ),
+    );
+    expect(finding(unattested, "registry-provenance:attestation")?.severity).toBe("note");
   });
 });

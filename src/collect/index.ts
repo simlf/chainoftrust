@@ -533,6 +533,7 @@ async function provenanceFindings(
     resolvedDoc && resolvedDoc.kind === registry.kind && resolvedDoc.info.name === registry.packageName
       ? resolvedDoc
       : undefined;
+  const unattested = declared ? "note" : "warning";
 
   // A manifest name is a claim anyone can make. Only an entry whose repository
   // field points back here is this repository's package; anything else would
@@ -540,7 +541,7 @@ async function provenanceFindings(
   const unlinked = (repositoryUrl: string | null): boolean => {
     if (!declared || pointsAt(repositoryUrl, target.owner, target.name)) return false;
     notChecked.push(
-      `The root manifest names the ${registry.kind} package ${label(registry.packageName)}, but that registry entry does not point back at this repository, so its registry provenance is not attributed to it.`,
+      `A package named ${label(registry.packageName)} exists on ${registry.kind} but does not point back at this repository, so its provenance is not attributed here.`,
     );
     return true;
   };
@@ -552,7 +553,7 @@ async function provenanceFindings(
 
     findings.push({
       check: "registry-provenance",
-      severity: info.hasAttestations ? "clean" : "warning",
+      severity: info.hasAttestations ? "clean" : unattested,
       concern: "registry-provenance:attestation",
       statement: !info.hasAttestations
         ? `The npm entry for ${label(info.name)}@${label(info.version)} carries no provenance attestation. Nothing published alongside the tarball ties it to a specific build.`
@@ -562,6 +563,11 @@ async function provenanceFindings(
       evidence: `registry.npmjs.org/${label(info.name)} ${info.hasAttestations && info.provenancePredicate ? "dist.attestations.provenance.predicateType" : "dist.attestations"}`,
       method: "registry",
     });
+    if (declared) {
+      notChecked.push(
+        `Whether the registry's latest published version of ${label(info.name)} (${label(info.version)}) was built from this commit was not verified. That requires downloading and comparing the artefact.`,
+      );
+    }
 
     const publisher = info.publishedBy;
     // The registry's own trusted-publisher record outranks reading the
@@ -633,7 +639,7 @@ async function provenanceFindings(
     if (!info || unlinked(info.repositoryUrl)) return [];
     findings.push({
       check: "registry-provenance",
-      severity: info.hasProvenance ? "clean" : "warning",
+      severity: info.hasProvenance ? "clean" : unattested,
       concern: "registry-provenance:attestation",
       statement: info.hasProvenance
         ? `The PyPI entry for ${label(info.name)} ${label(info.version)} carries a PEP 740 attestation binding the files to the workflow that published them.`
