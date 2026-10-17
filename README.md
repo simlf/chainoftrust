@@ -19,7 +19,7 @@ permission to do when you install it.
 |---|---|
 | **Install path** | Does an installer exist, does the release publish checksums or signatures, and **can the verification code actually run**? Package-manifest lifecycle scripts fold in here as one cheap field. |
 | **Agent config** | Does the repository ship hooks, skills, MCP registrations or plugin manifests, and does an installer write into `~/.claude` and friends? |
-| **Registry provenance** | For npm and PyPI targets with no installer to read, does the registry entry bind the published files to the build that produced them? |
+| **Registry provenance** | For any target that publishes to npm or PyPI (named directly, or declared in the root manifest and pointing back at the repository), does the registry entry bind the published files to the build that produced them, and was it published through trusted publishing? |
 | **Blast radius** | Which environment variables and hosts does the install path touch, and are any of them credential-shaped? |
 | **Trust root** | How concentrated are publishing rights, and what is the repository's real lineage? |
 | **Unauditable surface** | How much of what you would receive cannot be reviewed by reading it? |
