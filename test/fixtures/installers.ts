@@ -189,3 +189,72 @@ if [ -n "\${ANTHROPIC_API_KEY:-}" ]; then
 fi
 curl -fsSL -H "$AUTH_HEADER" "https://releases.astral.sh/uv/latest" -o "$_file"
 `;
+
+/**
+ * morluto/rea at 3460ceac, trimmed to the lines its report misread. The one
+ * fetch reads release metadata and parses a tag out of it; the install itself
+ * is `npm install --global`, which checks the registry tarball's sha512
+ * integrity. The nodejs.org and github.com URLs only ever appear in text the
+ * script prints. Reported as "downloads a file and never verifies it" and as
+ * contacting three hosts; it downloads no artefact and contacts one.
+ */
+export const DELEGATES_TO_PACKAGE_MANAGER = `#!/bin/bash
+{
+set -euo pipefail
+
+PACKAGE="rea-agents"
+REPOSITORY="morluto/rea"
+
+fail() {
+  printf 'REA installation failed: %s\\n' "$1" >&2
+  exit 1
+}
+
+fail_node_version() {
+  printf '  nvm:  nvm install 24 && nvm use 24      (https://github.com/nvm-sh/nvm)\\n' >&2
+  printf '    https://nodejs.org/dist/latest-v24.x/  (grab the %s-%s tarball)\\n' "$node_os_label" "$node_arch_label" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: install.sh [--version VERSION]
+See https://docs.example.org/install for details.
+USAGE
+}
+
+main() {
+  command -v curl >/dev/null 2>&1 || fail "curl is required. Install curl, then rerun this installer."
+  command -v node >/dev/null 2>&1 || fail "Node.js 22.x (>=22.19), 24.x (>=24.11), or 26+ is required; install it from https://nodejs.org and retry."
+  release_json="$(curl -fsSL --proto '=https' --tlsv1.2 --retry 3 -H 'Accept: application/vnd.github+json' "https://api.github.com/repos/$REPOSITORY/releases/latest")" || fail "the latest REA release could not be resolved. Check network access or pass --version VERSION, then retry."
+  tag="$(printf '%s' "$release_json" | node -e 'let s="";process.stdin.on("data",c=>s+=c).on("end",()=>{const v=JSON.parse(s).tag_name;if(typeof v!=="string")process.exit(1);process.stdout.write(v)})' 2>/dev/null)" || fail "the release response was invalid. Retry later or pass --version VERSION."
+  version="\${tag#rea-agents-}"
+
+  install_args=(install --global)
+  install_args+=("$PACKAGE@$version")
+  printf ' %q' npm "\${install_args[@]}"
+  npm "\${install_args[@]}" || fail "npm could not install REA. Check registry access and npm permissions, then retry."
+}
+
+main "$@"
+exit $?
+}
+`;
+
+/**
+ * The true positive the package-manager and metadata carve-outs must not
+ * swallow: a release tarball written to disk, extracted, and its installer
+ * run, with no checksum anywhere. The release-tag lookup in front of it is
+ * metadata; the tarball after it is not.
+ */
+export const UNVERIFIED_TARBALL_EXTRACT = `#!/bin/sh
+set -eu
+
+fail() { echo "install failed: $1 (see https://help.example.org)" >&2; exit 1; }
+
+command -v curl >/dev/null 2>&1 || fail "curl is required"
+TAG="$(curl -fsSL https://api.github.com/repos/acme/tool/releases/latest | grep '"tag_name"' | cut -d '"' -f 4)"
+curl -fsSL -o "/tmp/tool.tar.gz" "https://github.com/acme/tool/releases/download/$TAG/tool.tar.gz"
+tar -xzf /tmp/tool.tar.gz -C /tmp/tool
+sh /tmp/tool/install.sh
+`;

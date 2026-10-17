@@ -339,15 +339,30 @@ function installPathFindings(
 
     switch (v.state) {
       case "absent":
+        // Only a payload (written, extracted, executed) is something a
+        // checksum could cover. A release-tag lookup is not, and an install
+        // delegated to a package manager is verified by that manager.
+        if (a.payloadDownloads.length === 0 && a.delegatedInstalls.length > 0) {
+          const managers = [...new Set(a.delegatedInstalls.map((d) => d.manager))];
+          findings.push({
+            check: "install-path",
+            severity: "clean",
+            concern: "install-path:verification",
+            statement: `${path} downloads no artefact itself: it installs through ${labelList(managers)}, which checks each package against the registry's published integrity hash.${a.metadataReads.length > 0 ? " Its own fetches only read metadata the script parses." : ""}`,
+            evidence: cite(a.delegatedInstalls.map((d) => d.line)),
+            method: "file",
+          });
+          break;
+        }
         findings.push({
           check: "install-path",
-          severity: a.downloads.length > 0 ? "warning" : "note",
+          severity: a.payloadDownloads.length > 0 ? "warning" : "note",
           concern: "install-path:verification-absent",
           statement:
-            a.downloads.length > 0
+            a.payloadDownloads.length > 0
               ? `${path} downloads a file and never verifies it. No hashing or signature tool is invoked anywhere in its ${a.lineCount} lines.`
               : `${path} invokes no hashing or signature tool.`,
-          evidence: a.downloads.length > 0 ? cite(a.downloads) : `${path}, whole file`,
+          evidence: a.payloadDownloads.length > 0 ? cite(a.payloadDownloads) : `${path}, whole file`,
           method: "file",
         });
         break;
