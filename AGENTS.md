@@ -31,10 +31,12 @@ key wins, then Anthropic, else degraded mode), and the isolation guarantees
 hold on every provider path: `test/provider.test.ts` proves them on the
 OpenAI-compatible wire shape, so a new provider needs the same proof.
 
-Install scripts are read but never quoted: `analyseShell`'s findings cite only
-a path and line numbers, never the line text, so a comment claiming an
-installer is "safe, verified, audited" sitting next to real `sudo`/`curl|sh`
-code has no path to the model at all. Everything that is quoted (a hook
+Install scripts are read but never quoted to the model: `analyseShell`'s
+findings cite only a path and line numbers, never the line text, so a comment
+claiming an installer is "safe, verified, audited" sitting next to real
+`sudo`/`curl|sh` code has no path to the model at all. The cited-code excerpt
+(`Finding.source`) is for the HTML page only, escaped there, and is stripped
+from the JSON route and never read by `renderEvidence`. Everything that is quoted (a hook
 command, a lifecycle script, a prose excerpt) goes through `label()` on any
 target-chosen name and `sanitise()` on any target-chosen text at render time;
 both a name and a quote must go through those, never one or the other, which

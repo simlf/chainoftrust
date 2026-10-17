@@ -480,7 +480,10 @@ async function handleVerdictLookup(
         target: stored.report.target,
         summary: stored.writeup,
         summary_model: stored.writeupModel,
-        findings: stored.report.findings,
+        // The code excerpt is a reading aid for the HTML page. Left out here
+        // so an agent consuming this JSON receives install-script bytes only
+        // where it already did: in a finding's quote, never in its context.
+        findings: stored.report.findings.map(({ source: _source, ...finding }) => finding),
         not_checked: stored.report.notChecked,
         prose_excerpts: stored.report.proseExcerpts,
         scorecard: stored.report.scorecard ?? null,

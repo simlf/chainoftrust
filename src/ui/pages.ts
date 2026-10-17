@@ -1,5 +1,6 @@
+import { parseCitation, sourceUrl } from "../lib/citation";
 import { registryQualifierFor } from "../lib/target";
-import type { CheckId, Finding, Report, Severity, StoredVerdict } from "../types";
+import type { CheckId, Finding, Report, Severity, StoredVerdict, TargetRef } from "../types";
 import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
 import { elevationSchematic } from "./elevation";
 import { esc, page, SITE_URL } from "./layout";
@@ -212,7 +213,7 @@ ${
 }
 
 <div class="dim-divider">Annotations: ${esc(r.findings.length)} finding${r.findings.length === 1 ? "" : "s"}, ${esc(concerns)} distinct concern${concerns === 1 ? "" : "s"}</div>
-${r.findings.map(finding).join("\n")}
+${r.findings.map((f, i) => finding(f, i, t)).join("\n")}
 
 <div class="dim-divider">Unsurveyed: declared out of scope</div>
 <div class="unsurveyed">
@@ -289,7 +290,7 @@ function degradedNotice(reason: StoredVerdict["writeupDegradedReason"]): string 
   }
 }
 
-function finding(f: Finding, index: number): string {
+function finding(f: Finding, index: number, t: TargetRef): string {
   const cls = esc(f.severity);
   const concern =
     f.concern && f.concern !== f.check
@@ -303,9 +304,56 @@ function finding(f: Finding, index: number): string {
     <div class="meta"><span class="sev">${esc(f.severity.toUpperCase())}</span> &middot; <span class="chk">${esc(f.check)}${concern ? ` / ${esc(concern)}` : ""}</span></div>
     <p>${esc(f.statement)}</p>
     ${f.quote ? `<blockquote>${esc(f.quote)}</blockquote>` : ""}
-    <p class="cite">${esc(f.evidence)}</p>
+    <p class="cite">${citation(f, t)}</p>
+    ${f.source ? codeToggle(f.source) : ""}
   </div>
 </div>`;
+}
+
+/**
+ * The evidence line, with every file it cites linked to that file at the
+ * pinned commit. A path links to the cited lines as a range, each line number
+ * to its own line. Works from the evidence string alone, so a report stored
+ * before excerpts existed still gets its links.
+ */
+function citation(f: Finding, t: TargetRef): string {
+  return parseCitation(f.evidence)
+    .map((s) => {
+      if (s.kind === "text") return esc(s.text);
+      const lines =
+        s.lines.length > 0 ? s.lines : f.source?.path === s.path ? f.source.lines : [];
+      const link = (text: string, at: number[]) =>
+        `<a href="${esc(sourceUrl(t.owner, t.name, t.sha, s.path, at))}" rel="noopener noreferrer">${esc(text)}</a>`;
+      const numbers =
+        s.lines.length > 0 ? `:${s.lines.map((n) => link(String(n), [n])).join(",")}` : "";
+      return `${link(s.path, lines)}${numbers}`;
+    })
+    .join("");
+}
+
+/**
+ * The cited code, collapsed by default. Native details/summary so it works
+ * without script and is keyboard-reachable; the open panel is height-capped
+ * and scrolls inside itself so it never takes over the page. Every byte is
+ * repository text and goes through esc(), never through markup.
+ */
+function codeToggle(source: NonNullable<Finding["source"]>): string {
+  const cited = new Set(source.lines);
+  const count = source.excerpt.reduce((n, h) => n + h.lines.length, 0);
+  const width = String(
+    Math.max(...source.excerpt.map((h) => h.start + h.lines.length - 1)),
+  ).length;
+  const hunks = source.excerpt
+    .map((h) =>
+      h.lines
+        .map((text, i) => {
+          const n = h.start + i;
+          return `<span class="ln${cited.has(n) ? " hit" : ""}"><span class="no">${esc(String(n).padStart(width, " "))}</span>${esc(text)}</span>`;
+        })
+        .join(""),
+    )
+    .join(`<span class="gap">&#8942;</span>`);
+  return `<details class="code"><summary>Show code &middot; ${esc(count)} line${count === 1 ? "" : "s"} from ${esc(source.path)}</summary><pre>${hunks}</pre></details>`;
 }
 
 /**

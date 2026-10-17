@@ -30,7 +30,9 @@ the second found four distinct defects across four projects where the first
 found none. **Agent-config auto-discovery** fires on file presence alone, before
 any install step, which is a mechanism no existing scanner models.
 
-Every finding cites the file, line or API field it came from. Every report ends
+Every finding cites the file, line or API field it came from. On the report
+page a cited file links to that path at the analysed commit, and, when the
+file was one this analysis read, a collapsed toggle shows the cited code. Every report ends
 with what was **not** checked, which is as load-bearing as the findings: it is
 the difference between this and a scanner that implies completeness.
 

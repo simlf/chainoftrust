@@ -17,6 +17,7 @@ import { analyseHookManifest, scanAgentConfig } from "./agent-config";
 import { analysePackageJson, analysePyproject, declaredPackage } from "./manifest";
 import { PROSE_CANDIDATES, scanProse } from "./prose";
 import { analyseShell, credentialShaped } from "./shell";
+import { attachSources } from "./source";
 import { censusSurface } from "./surface";
 
 export class TargetNotFound extends Error {}
@@ -190,6 +191,8 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
       "Install scripts hosted outside this repository were not fetched. Only scripts committed to the repository itself are read.",
     );
   }
+
+  attachSources(findings, fetched);
 
   return {
     target,

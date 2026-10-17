@@ -273,6 +273,30 @@ footer { margin-top: 1.5rem; font-size: 0.74rem; color: var(--dim); }
 }
 .anno .cite { font-family: var(--mono); font-size: 0.62rem; color: var(--dim); word-break: break-all; }
 .anno .cite::before { content: "REF "; letter-spacing: 0.14em; color: var(--ice); }
+.anno .cite a { color: var(--dim); text-decoration-color: var(--line); text-underline-offset: 2px; }
+.anno .cite a:hover, .anno .cite a:focus-visible { color: var(--ice); text-decoration-color: var(--ice); }
+.anno > div { min-width: 0; }
+.anno details.code { margin: -0.2rem 0 0; }
+.anno details.code summary {
+  display: inline-block; cursor: pointer; list-style: none;
+  font-family: var(--mono); font-size: 0.58rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--ice); padding: 0.1rem 0;
+}
+.anno details.code summary::-webkit-details-marker { display: none; }
+.anno details.code summary::before { content: "\\25B8  "; white-space: pre; }
+.anno details.code[open] summary::before { content: "\\25BE  "; }
+.anno details.code summary:focus-visible { outline: 1px dashed var(--ice); outline-offset: 2px; }
+.anno details.code pre {
+  margin: 0.35rem 0 0.2rem; padding: 0.45rem 0; max-height: 16rem; overflow: auto;
+  background: rgba(5,23,38,.75); border: 1px solid var(--line-faint);
+  font-family: var(--mono); font-size: 0.68rem; line-height: 1.5; color: #cfe3f2;
+}
+.anno details.code .ln { display: block; padding: 0 0.8rem 0 0; white-space: pre; min-width: max-content; }
+.anno details.code .ln.hit { background: rgba(255,210,122,.1); box-shadow: inset 2px 0 0 var(--warn); }
+.anno.critical details.code .ln.hit { background: rgba(255,157,138,.12); box-shadow: inset 2px 0 0 var(--crit); }
+.anno.clean details.code .ln.hit, .anno.note details.code .ln.hit { background: rgba(159,240,200,.08); box-shadow: inset 2px 0 0 var(--ok); }
+.anno details.code .no { display: inline-block; padding: 0 0.7rem 0 0.6rem; margin-right: 0.6rem; color: var(--dim); opacity: .7; border-right: 1px solid var(--line-faint); user-select: none; }
+.anno details.code .gap { display: block; padding-left: 0.9rem; color: var(--dim); opacity: .6; }
 @media (max-width: 34rem) {
   .anno { grid-template-columns: 2.2rem 1fr; gap: 0 0.7rem; }
   /* A floated stamp next to a long repository name squeezes the heading into
