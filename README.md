@@ -133,8 +133,11 @@ What this repository does instead:
   `src/verdict/version.ts`, which also says when to bump it) or is older than
   `REPORT_MAX_AGE_DAYS`. That recomputation is a fresh analysis charged to the
   submitter like any other, and replaces the old row, so the next submission
-  is a plain hit again. Nothing recomputes on a schedule or on a read: a stale
-  report is still readable, marked as stale, with a button to resubmit it.
+  is a plain hit again. A submitter with no analyses left, or a recomputation
+  that fails, gets the stale report instead. A recomputation that produces no
+  written summary keeps the old one when the findings are unchanged. Nothing
+  recomputes on a schedule or on a read: a stale report is still readable,
+  marked as stale, with a button to resubmit it.
 - A repository that has moved to a newer commit still serves its last report by
   default, with a notice and an explicit "analyse the newer commit" action, so
   pasting the same URL twice never re-spends. That action is throttled to at
