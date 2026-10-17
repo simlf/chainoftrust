@@ -313,6 +313,25 @@ const UNREGISTERED_ARTEFACT =
 const HOSTED_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(#\S*)?$/;
 const NPM_FAMILY = /^(npm|pnpm|yarn|bun)$/;
 
+/** Package-manager flags whose next word is a value (a directory, a URL), not a package. */
+const TAKES_VALUE = /^(--prefix|--cwd|-C|--dir|--registry|--cache|--userconfig|--globalconfig|--global-folder|--target|-t)$/;
+
+/** The words of a package-manager command line that can name a package. */
+function positionalArgs(args: string): string[] {
+  const words = args
+    .replace(/\d*>{1,2}&?\s*\S+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/^["']|["']$/g, ""));
+  const out: string[] = [];
+  for (let k = 0; k < words.length; k++) {
+    const w = words[k]!;
+    if (TAKES_VALUE.test(w)) k++;
+    else if (w && !w.startsWith("-")) out.push(w);
+  }
+  return out;
+}
+
 interface Command {
   text: string;
   lines: Line[];
@@ -576,6 +595,7 @@ function fetchKind(
     if (!parses && !PARSES_TEXT.test(word)) unknownConsumer = true;
     k = segEnd;
   }
+  if (unknownConsumer) return "payload";
 
   if ((sc.depth[i] ?? 0) > 0) {
     // Captured by $(...). Run directly by its outer command, or captured into
@@ -587,7 +607,7 @@ function fetchKind(
     if (assigned) return evaluatesVar(allText, assigned[1]!) ? "payload" : "metadata";
     return CONSUMES_PAYLOAD.test(commandWord(t, outerStart)) ? "payload" : "metadata";
   }
-  return consumers > 0 && !unknownConsumer ? "metadata" : "payload";
+  return consumers > 0 ? "metadata" : "payload";
 }
 
 function redirectsToFile(args: string): boolean {
@@ -634,7 +654,7 @@ function packageManagerInstall(t: string, sc: Scan, start: number, allText: stri
   const verbs = PACKAGE_MANAGERS[manager];
   if (!verbs) return null;
 
-  let verb = args.replace(/^(?:\s+-{1,2}[A-Za-z][\w-]*)*\s+/, "");
+  let verb = positionalArgs(args).join(" ");
   // `npm "${install_args[@]}"`: the verb lives in the array's assignment.
   const expanded = /^["']?\$\{?([A-Za-z_][A-Za-z0-9_]*)(\[@\])?\}?/.exec(verb);
   if (expanded) {
@@ -644,8 +664,9 @@ function packageManagerInstall(t: string, sc: Scan, start: number, allText: stri
   }
   if (!verbs.test(verb)) return null;
   if (UNREGISTERED_ARTEFACT.test(args)) return "unregistered";
-  const words = args.trim().split(/\s+/).map((w) => w.replace(/^["']|["']$/g, ""));
-  if (NPM_FAMILY.test(manager) && words.some((w) => HOSTED_SHORTHAND.test(w))) return "unregistered";
+  if (NPM_FAMILY.test(manager) && positionalArgs(args).some((w) => !/^(\.{1,2}\/|\/|~)/.test(w) && HOSTED_SHORTHAND.test(w))) {
+    return "unregistered";
+  }
   return manager;
 }
 

