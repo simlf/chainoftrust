@@ -274,8 +274,14 @@ async function handleAnalyse(
     }
   }
 
+  // A stale report that cannot be recomputed right now is still the best
+  // answer on file, and its page already says it is stale. Reading it stays
+  // free, so a spent allowance or a failed recomputation lands there.
   const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
-  if (!limit.allowed) return refusedPage(limit, config);
+  if (!limit.allowed) {
+    if (cached) return redirect(verdictPath(cached.report));
+    return refusedPage(limit, config);
+  }
 
   try {
     const evidence = await collect(fetcher, resolved);
@@ -290,17 +296,41 @@ async function handleAnalyse(
     });
     await store.recordSpend(summary.microCents);
 
-    await store.putVerdict(report, summary.text, summary.model, summary.degradedReason, {
-      replace: cached !== null,
-    });
+    // A recomputation must not lose a summary to a degraded model call when
+    // the summary still describes exactly what the new report says.
+    const kept = summary.text === null && cached && sameFindings(cached.report, report);
+    await store.putVerdict(
+      report,
+      kept ? cached.writeup : summary.text,
+      kept ? cached.writeupModel : summary.model,
+      kept && cached.writeup !== null ? null : summary.degradedReason,
+      { replace: cached !== null },
+    );
     return redirect(verdictPath(report));
   } catch (err) {
     // The analysis produced nothing, so the slot goes back, up to the daily
     // allowance the release path enforces itself. Past that a failure costs the
     // slot, which is what bounds a target that fails on every attempt.
     await store.releaseRateLimit(ipHash);
+    if (cached) return redirect(verdictPath(cached.report));
     throw err;
   }
+}
+
+/**
+ * Whether a summary written over one report still describes another. Finding
+ * statements are compared by what they are about, not their wording, because
+ * some carry a day count ("the last push was 78 days ago") that moves on its
+ * own between two runs over the same commit.
+ */
+function sameFindings(before: Report, after: Report): boolean {
+  const identity = (report: Report) =>
+    JSON.stringify(report.findings.map((f) => [f.check, f.concern, f.severity, f.evidence]));
+  return (
+    (before.analyserVersion ?? 0) === (after.analyserVersion ?? 0) &&
+    before.verdict === after.verdict &&
+    identity(before) === identity(after)
+  );
 }
 
 /**
