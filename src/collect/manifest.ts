@@ -104,6 +104,48 @@ export function analysePyproject(path: string, source: string): Finding[] {
   ];
 }
 
+/**
+ * The registry package a repository says it publishes, read from the root
+ * manifest.
+ *
+ * A private package.json publishes nothing, so it names nothing. The name is
+ * only a claim: anyone can write `"name": "react"` into a manifest, so the
+ * caller must confirm the registry entry points back at this repository before
+ * attributing anything the registry says about that name to it.
+ */
+export function declaredPackage(
+  files: { path: string; text: string }[],
+): { kind: "npm" | "pypi"; packageName: string } | null {
+  const pkg = files.find((file) => file.path === "package.json");
+  if (pkg) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(pkg.text);
+    } catch {
+      parsed = null;
+    }
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const { name, private: isPrivate } = parsed as { name?: unknown; private?: unknown };
+      if (isPrivate !== true && typeof name === "string" && NPM_NAME.test(name)) {
+        return { kind: "npm", packageName: name };
+      }
+    }
+  }
+
+  const pyproject = files.find((file) => file.path === "pyproject.toml");
+  if (pyproject) {
+    // Only the [project] table's own name, up to the next table header.
+    const table = /^\[project\][^\S\n]*$([\s\S]*?)(?=^\[|(?![\s\S]))/m.exec(pyproject.text);
+    const name = table ? /^name\s*=\s*["']([^"']+)["']/m.exec(table[1]!)?.[1] : undefined;
+    if (name && PYPI_NAME.test(name)) return { kind: "pypi", packageName: name };
+  }
+
+  return null;
+}
+
+const NPM_NAME = /^(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/i;
+const PYPI_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+
 function truncate(s: string): string {
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length <= 80 ? flat : `${flat.slice(0, 79)}…`;

@@ -6,6 +6,17 @@ export interface NpmPackageInfo {
   /** npm Trusted Publishing leaves a SLSA provenance statement here. */
   hasAttestations: boolean;
   /**
+   * `dist.attestations.provenance.predicateType`, such as
+   * https://slsa.dev/provenance/v1. Null when the registry names none.
+   */
+  provenancePredicate: string | null;
+  /**
+   * `_npmUser.trustedPublisher.id`: the registry's own record that this version
+   * was published through npm trusted publishing (OIDC from a CI provider it
+   * names, such as `github`), rather than inferred from the account's name.
+   */
+  trustedPublisher: string | null;
+  /**
    * The publishing account, name and email kept apart.
    *
    * `GitHub Actions <npm-oidc-no-reply@github.com>` means OIDC, not a PAT.
@@ -33,8 +44,11 @@ interface NpmDoc {
 
 interface NpmVersionDoc {
   version: string;
-  dist?: { integrity?: string; attestations?: unknown };
-  _npmUser?: { name?: string; email?: string };
+  dist?: {
+    integrity?: string;
+    attestations?: { provenance?: { predicateType?: unknown } } | null;
+  };
+  _npmUser?: { name?: string; email?: string; trustedPublisher?: { id?: unknown } | null };
   scripts?: Record<string, string>;
   dependencies?: Record<string, string>;
   bin?: Record<string, string> | string;
@@ -62,6 +76,8 @@ export async function fetchNpm(
     name: doc.name,
     version: latest,
     hasAttestations: Boolean(v.dist?.attestations),
+    provenancePredicate: stringOrNull(v.dist?.attestations?.provenance?.predicateType),
+    trustedPublisher: stringOrNull(user?.trustedPublisher?.id),
     publishedBy: user?.name ? { name: user.name, email: user.email ?? null } : null,
     maintainers: (doc.maintainers ?? []).map((m) => m.name),
     repositoryUrl: repoUrl(v.repository) ?? repoUrl(doc.repository),
@@ -132,6 +148,10 @@ export async function fetchScorecard(
   );
   if (!r || typeof r.score !== "number") return null;
   return { score: r.score, date: r.date };
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
 }
 
 function repoUrl(field: { url?: string } | string | undefined): string | null {

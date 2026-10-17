@@ -14,7 +14,7 @@ import { label, labelList } from "../lib/label";
 import { cacheKeyFor, isRepoIdentifier, isSafeRef } from "../lib/target";
 import type { Evidence, Finding, NotChecked, TargetRef, TreeEntry } from "../types";
 import { analyseHookManifest, scanAgentConfig } from "./agent-config";
-import { analysePackageJson, analysePyproject } from "./manifest";
+import { analysePackageJson, analysePyproject, declaredPackage } from "./manifest";
 import { PROSE_CANDIDATES, scanProse } from "./prose";
 import { analyseShell, credentialShaped } from "./shell";
 import { censusSurface } from "./surface";
@@ -161,7 +161,7 @@ export async function collect(f: Fetcher, resolvedTarget: Resolved): Promise<Evi
   notChecked.push(...prose.notChecked);
 
   findings.push(
-    ...(await provenanceFindings(f, target, notChecked, resolvedTarget.registryDoc)),
+    ...(await provenanceFindings(f, target, notChecked, resolvedTarget.registryDoc, fetched)),
   );
   findings.push(...(await trustRootFindings(f, owner, name, repo.meta)));
 
@@ -504,45 +504,80 @@ function installPathFindings(
 }
 
 /**
- * Registry provenance: adjustment 3 from the validation report. For a target
- * with no installer to read, "does the registry entry bind this tarball to a
- * specific CI run" is the correct analogue of "does the installer check the
- * checksum". It cleanly separated @playwright/mcp from its typosquat.
+ * Registry provenance: adjustment 3 from the validation report. "Does the
+ * registry entry bind this tarball to a specific CI run" is the registry
+ * analogue of "does the installer check the checksum". It cleanly separated
+ * @playwright/mcp from its typosquat.
+ *
+ * It runs for every target that publishes to npm or PyPI, not only for a
+ * submission that named the package. A repository submission learns the
+ * package from its root manifest. morluto/rea ships an install.sh and publishes
+ * rea-agents with SLSA provenance through npm trusted publishing, and its report
+ * used to say nothing about either, because a pasted GitHub URL never reached
+ * this check at all.
  */
 async function provenanceFindings(
   f: Fetcher,
   target: TargetRef,
   notChecked: NotChecked[],
   resolvedDoc: RegistryDoc | undefined,
+  fetched: { path: string; text: string }[],
 ): Promise<Finding[]> {
-  const registry = target.registry;
+  // A submission that named the package already proved the link: resolution
+  // followed the registry entry's own repository field to get here.
+  const declared = target.registry ? null : declaredPackage(fetched);
+  const registry = target.registry ?? declared;
   if (!registry) return [];
   const findings: Finding[] = [];
   const carried =
     resolvedDoc && resolvedDoc.kind === registry.kind && resolvedDoc.info.name === registry.packageName
       ? resolvedDoc
       : undefined;
+  const unattested = declared ? "note" : "warning";
+
+  // A manifest name is a claim anyone can make. Only an entry whose repository
+  // field points back here is this repository's package; anything else would
+  // lend a fork, or a squatter on a popular name, someone else's provenance.
+  const unlinked = (repositoryUrl: string | null): boolean => {
+    if (!declared || pointsAt(repositoryUrl, target.owner, target.name)) return false;
+    notChecked.push(
+      `A package named ${label(registry.packageName)} exists on ${registry.kind} but does not point back at this repository, so its provenance is not attributed here.`,
+    );
+    return true;
+  };
 
   if (registry.kind === "npm") {
     const info =
       carried?.kind === "npm" ? carried.info : await fetchNpm(f, registry.packageName);
-    if (!info) return [];
+    if (!info || unlinked(info.repositoryUrl)) return [];
 
     findings.push({
       check: "registry-provenance",
-      severity: info.hasAttestations ? "clean" : "warning",
+      severity: info.hasAttestations ? "clean" : unattested,
       concern: "registry-provenance:attestation",
-      statement: info.hasAttestations
-        ? `The npm entry for ${label(info.name)}@${label(info.version)} carries a provenance attestation, which ties the published tarball to the CI run that built it.`
-        : `The npm entry for ${label(info.name)}@${label(info.version)} carries no provenance attestation. Nothing published alongside the tarball ties it to a specific build.`,
-      evidence: `registry.npmjs.org/${label(info.name)} dist.attestations`,
+      statement: !info.hasAttestations
+        ? `The npm entry for ${label(info.name)}@${label(info.version)} carries no provenance attestation. Nothing published alongside the tarball ties it to a specific build.`
+        : info.provenancePredicate
+          ? `The npm entry for ${label(info.name)}@${label(info.version)} carries a provenance attestation of type ${label(info.provenancePredicate)}, which ties the published tarball to the CI run that built it.`
+          : `The npm entry for ${label(info.name)}@${label(info.version)} carries a provenance attestation, which ties the published tarball to the CI run that built it.`,
+      evidence: `registry.npmjs.org/${label(info.name)} ${info.hasAttestations && info.provenancePredicate ? "dist.attestations.provenance.predicateType" : "dist.attestations"}`,
       method: "registry",
     });
+    if (declared) {
+      notChecked.push(
+        `Whether the registry's latest published version of ${label(info.name)} (${label(info.version)}) was built from this commit was not verified. That requires downloading and comparing the artefact.`,
+      );
+    }
 
     const publisher = info.publishedBy;
-    const viaOidc = /github actions|npm-oidc-no-reply/i.test(
-      publisher ? `${publisher.name} ${publisher.email ?? ""}` : "",
-    );
+    // The registry's own trusted-publisher record outranks reading the
+    // account's name, and is the field a reader can check.
+    const trusted = info.trustedPublisher;
+    const viaOidc =
+      trusted !== null ||
+      /github actions|npm-oidc-no-reply/i.test(
+        publisher ? `${publisher.name} ${publisher.email ?? ""}` : "",
+      );
     // Name and email are clamped separately so the citation reads the way
     // registry.npmjs.org spells it. label() drops the space and the angle
     // brackets, so one combined name would always render run together.
@@ -555,10 +590,12 @@ async function provenanceFindings(
       check: "registry-provenance",
       severity: viaOidc ? "clean" : "note",
       concern: "registry-provenance:publisher",
-      statement: viaOidc
-        ? `The package was published by CI over OIDC rather than with a long-lived personal token.`
-        : `The package was published by ${publisherCitation}, which indicates a long-lived publish token rather than CI over OIDC.`,
-      evidence: `registry.npmjs.org/${label(info.name)} _npmUser`,
+      statement: trusted
+        ? `The package was published through npm trusted publishing (trusted publisher ${label(trusted)}): CI over OIDC rather than a long-lived personal token.`
+        : viaOidc
+          ? `The package was published by CI over OIDC rather than with a long-lived personal token.`
+          : `The package was published by ${publisherCitation}, which indicates a long-lived publish token rather than CI over OIDC.`,
+      evidence: `registry.npmjs.org/${label(info.name)} ${trusted ? "_npmUser.trustedPublisher" : "_npmUser"}`,
       method: "registry",
     });
 
@@ -599,10 +636,10 @@ async function provenanceFindings(
   } else {
     const info =
       carried?.kind === "pypi" ? carried.info : await fetchPypi(f, registry.packageName);
-    if (!info) return [];
+    if (!info || unlinked(info.repositoryUrl)) return [];
     findings.push({
       check: "registry-provenance",
-      severity: info.hasProvenance ? "clean" : "warning",
+      severity: info.hasProvenance ? "clean" : unattested,
       concern: "registry-provenance:attestation",
       statement: info.hasProvenance
         ? `The PyPI entry for ${label(info.name)} ${label(info.version)} carries a PEP 740 attestation binding the files to the workflow that published them.`
@@ -616,6 +653,21 @@ async function provenanceFindings(
   }
 
   return findings;
+}
+
+/**
+ * Whether a registry repository field names this GitHub repository. npm's is
+ * already `owner/name`; PyPI's is a URL. GitHub names are case-insensitive.
+ */
+function pointsAt(repositoryUrl: string | null, owner: string, name: string): boolean {
+  if (!repositoryUrl) return false;
+  const [o, n] = repositoryUrl
+    .replace(/^(?:git\+)?https?:\/\/(?:www\.)?github\.com\//i, "")
+    .split(/[/#?]/);
+  return (
+    (o ?? "").toLowerCase() === owner.toLowerCase() &&
+    (n ?? "").replace(/\.git$/i, "").toLowerCase() === name.toLowerCase()
+  );
 }
 
 function neighbourName(name: string): string | null {

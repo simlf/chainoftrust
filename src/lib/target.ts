@@ -167,9 +167,11 @@ const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+_!~-]{0,64}$/;
  * Canonical, URL-safe identity used as the D1 primary key.
  *
  * A registry submission is a different analysis from a bare repository
- * submission at the same commit: only the former runs the registry-provenance
- * check. They therefore occupy distinct rows, or the first one analysed would
- * silently be served for the other with a check missing and nothing saying so.
+ * submission at the same commit: the former checks the package that was named,
+ * and scores a missing attestation as a warning, where the latter only reads a
+ * package its own manifest declares. They therefore occupy distinct rows, or the
+ * first one analysed would silently be served for the other with a different
+ * check and nothing saying so.
  *
  * The published version is part of that identity too. A registry submission is
  * pinned to the repository's default-branch commit, not to the version's tag,
