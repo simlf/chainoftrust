@@ -2,6 +2,7 @@ import { parseCitation, sourceUrl } from "../lib/citation";
 import { registryQualifierFor } from "../lib/target";
 import type { CheckId, Finding, Report, Severity, StoredVerdict, TargetRef } from "../types";
 import { VERDICT_LABEL, VERDICT_SUMMARY } from "../verdict/score";
+import type { Staleness } from "../verdict/version";
 import { elevationSchematic } from "./elevation";
 import { esc, page, SITE_URL } from "./layout";
 
@@ -162,6 +163,7 @@ export function verdictPage(
   contact: string,
   pinned = false,
   newerCommit: string | null = null,
+  stale: Staleness | null = null,
 ): Response {
   const r = stored.report;
   const t = r.target;
@@ -196,6 +198,8 @@ ${
 </form></div>`
     : ""
 }
+
+${stale ? stalePanel(r, stale) : ""}
 
 ${chainOfTrust(r)}
 ${elevationSchematic(r)}
@@ -261,10 +265,35 @@ ${
     contact,
     description: `${repo} at ${sha7}: ${VERDICT_LABEL[r.verdict]}, ${r.findings.length} finding${r.findings.length === 1 ? "" : "s"} across ${concerns} distinct concern${concerns === 1 ? "" : "s"}. Read one file at a time, nothing installed or executed.`,
     path: verdictPath(r),
-    // Pinned by commit SHA: the URL never resolves to different content, so a
-    // repeat view of a shared link may be cached, same as the JSON route.
-    ...(pinned ? { cacheControl: "public, max-age=3600" } : {}),
+    // Pinned by commit SHA: the URL only resolves to different content once
+    // the report is recomputed, so a repeat view of a shared link may be
+    // cached, same as the JSON route. A stale one is about to be recomputed.
+    ...(pinned && !stale ? { cacheControl: "public, max-age=3600" } : {}),
   });
+}
+
+/**
+ * Says a report is stale instead of presenting it as current, and offers the
+ * submission that recomputes it. Reading never recomputes anything: only a
+ * submission does, because that is where the rate limits and the budget
+ * apply. A plain report resubmits its own commit, which lands on the same
+ * row. A package report resubmits the package, whose resolution follows the
+ * registry's current version, so it may land on a newer report instead.
+ */
+function stalePanel(r: Report, stale: Staleness): string {
+  const t = r.target;
+  const why =
+    stale === "outdated-checks"
+      ? "This report was produced by an earlier version of the checks, which have changed since. Its findings and verdict may differ from what the current checks report for this commit."
+      : "This report is old enough that what it cites from outside the repository (release assets, registry metadata, the Scorecard result) may have changed, even though the commit has not.";
+  const target = t.registry
+    ? `${t.registry.kind}:${t.registry.packageName}`
+    : `https://github.com/${t.owner}/${t.name}/tree/${t.sha}`;
+  return `<div class="notpanel">${esc(why)} It is recomputed the next time it is submitted.
+<form method="post" action="/analyse">
+  <input type="hidden" name="target" value="${esc(target)}">
+  <button type="submit">Recompute this report</button>
+</form></div>`;
 }
 
 /**

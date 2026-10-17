@@ -87,25 +87,44 @@ export class Store {
     return row ? hydrate(row) : null;
   }
 
+  /**
+   * `replace` is for a recomputation of a stale report (see
+   * src/verdict/version.ts). Without it, a second write of the same key keeps
+   * an earlier written summary rather than lose it to a degraded one, which is
+   * right when both writes analysed the same thing. A recomputation analysed
+   * something newer, so the old summary describes findings that may no longer
+   * exist and is dropped with them, and the row's age restarts, or a report
+   * recomputed for its age would read as expired again at once.
+   */
   async putVerdict(
     report: Report,
     writeup: string | null,
     writeupModel: string | null,
     writeupDegradedReason: "budget" | "no-key" | "error" | null,
+    opts: { replace?: boolean } = {},
   ): Promise<void> {
+    const onConflict = opts.replace
+      ? `report_json = excluded.report_json,
+           verdict = excluded.verdict,
+           writeup = excluded.writeup,
+           writeup_model = excluded.writeup_model,
+           writeup_degraded_reason = excluded.writeup_degraded_reason,
+           created_at = excluded.created_at`
+      : `report_json = excluded.report_json,
+           verdict = excluded.verdict,
+           writeup = COALESCE(excluded.writeup, verdicts.writeup),
+           writeup_model = COALESCE(excluded.writeup_model, verdicts.writeup_model),
+           writeup_degraded_reason = CASE
+             WHEN COALESCE(excluded.writeup, verdicts.writeup) IS NOT NULL THEN NULL
+             ELSE COALESCE(verdicts.writeup_degraded_reason, excluded.writeup_degraded_reason)
+           END`;
     await this.db
       .prepare(
         `INSERT INTO verdicts
            (cache_key, host, owner, name, ref, verdict, report_json, writeup, writeup_model, writeup_degraded_reason, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(cache_key) DO UPDATE SET
-           report_json = excluded.report_json,
-           writeup = COALESCE(excluded.writeup, verdicts.writeup),
-           writeup_model = COALESCE(excluded.writeup_model, verdicts.writeup_model),
-           writeup_degraded_reason = CASE
-             WHEN COALESCE(excluded.writeup, verdicts.writeup) IS NOT NULL THEN NULL
-             ELSE COALESCE(verdicts.writeup_degraded_reason, excluded.writeup_degraded_reason)
-           END`,
+           ${onConflict}`,
       )
       .bind(
         report.target.cacheKey,

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import worker, { MIN_REANALYSIS_INTERVAL_MS } from "../src/index";
+import { ANALYSER_VERSION } from "../src/verdict/version";
 
 /**
  * A stand-in for the D1 statements the Worker issues on the submit and lookup
@@ -321,5 +322,156 @@ describe("a new head commit on an already-analysed repository", () => {
     );
     expect(res.headers.get("location")).toContain("/r/github/o/r/deadbeef");
     expect(slotsOf(db)).toBe(slotsAfterFirst + 1);
+  });
+});
+
+describe("a stored report produced by older checks, or past its maximum age", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** Rewrite the stored row as if an earlier deploy's checks had written it. */
+  function markOlderChecks(db: ReturnType<typeof fakeDb>, version?: number) {
+    for (const row of db.verdicts.values()) {
+      const report = JSON.parse(row.report_json) as Record<string, unknown>;
+      if (version === undefined) delete report.analyserVersion;
+      else report.analyserVersion = version;
+      row.report_json = JSON.stringify(report);
+    }
+  }
+
+  it("serves a report from the current checks without recomputing it", async () => {
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const stored = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(stored.analyserVersion, "a fresh report is stamped").toBe(ANALYSER_VERSION);
+    const slots = slotsOf(db);
+    const calls = fetchSpy.mock.calls.length;
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(slotsOf(db), "a current hit spends no analysis").toBe(slots);
+    expect(fetchSpy.mock.calls.length, "only the two resolving calls").toBe(calls + 2);
+  });
+
+  it.each([
+    ["with no version at all, as every report stored before the stamp", undefined],
+    ["with an older version", ANALYSER_VERSION - 1],
+  ])("recomputes a report %s, then serves the recomputation", async (_label, version) => {
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db, version);
+    const slots = slotsOf(db);
+    const providerCalls = () =>
+      fetchSpy.mock.calls.filter(([u]) => String(u).includes("openrouter")).length;
+    const providerBefore = providerCalls();
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    expect(slotsOf(db), "the recomputation is a fresh analysis, charged as one").toBe(
+      slots + 1,
+    );
+    expect(providerCalls(), "and gets a fresh summary").toBe(providerBefore + 1);
+    expect(db.verdicts.size, "it replaces the old row rather than adding one").toBe(1);
+    const replaced = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(replaced.analyserVersion).toBe(ANALYSER_VERSION);
+
+    // One visitor cannot turn one stale report into repeated runs: the
+    // recomputation is current, so every later submission is a plain hit.
+    for (let i = 0; i < 10; i++) await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+    expect(providerCalls()).toBe(providerBefore + 1);
+  });
+
+  it("recomputes a report past the maximum age, and not one inside it", async () => {
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const slots = slotsOf(db);
+
+    vi.advanceTimersByTime(29 * DAY);
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db), "29 days old is inside the default 30").toBe(slots);
+
+    vi.advanceTimersByTime(2 * DAY);
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(slotsOf(db), "31 days old is recomputed").toBe(slots + 1);
+
+    // The recomputation restarted the row's age, so the next one is a hit.
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+  });
+
+  it("honours a configured maximum age", async () => {
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const env = { ...envWith(db), REPORT_MAX_AGE_DAYS: "2" };
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const slots = slotsOf(db);
+    vi.advanceTimersByTime(3 * DAY);
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+  });
+
+  it("refuses a stale recomputation once the visitor's fresh analyses are spent", async () => {
+    // A recomputation is a fresh analysis, so the per-address limit applies
+    // to it exactly as it does to a first analysis.
+    const db = fakeDb();
+    const env = { ...envWith(db), FRESH_ANALYSES_PER_IP_PER_DAY: "1" };
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db);
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(429);
+    const stored = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(stored.analyserVersion, "nothing was recomputed").toBeUndefined();
+  });
+
+  it("marks a stale report as such when read, and recomputes nothing on a read", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db);
+    const slots = slotsOf(db);
+    const calls = fetchSpy.mock.calls.length;
+
+    const page = await worker.fetch(read("/r/github/o/r/aaa111"), env);
+    expect(page.status, "reading is never refused").toBe(200);
+    expect(page.headers.get("cache-control"), "and a stale page is not cacheable").toBeNull();
+    const body = await page.text();
+    expect(body).toContain("earlier version of the checks");
+    expect(body).toContain('name="target" value="https://github.com/o/r/tree/aaa111"');
+
+    const api = await worker.fetch(read("/api/v1/verdict/github/o/r/aaa111"), env);
+    expect(api.headers.get("cache-control")).toBe("no-store");
+    const payload = (await api.json()) as Record<string, unknown>;
+    expect(payload.outdated).toBe("outdated-checks");
+    expect(payload.analyser_version).toBe(0);
+    expect(payload.current_analyser_version).toBe(ANALYSER_VERSION);
+
+    expect(slotsOf(db)).toBe(slots);
+    expect(fetchSpy.mock.calls.length, "a read reaches nothing upstream").toBe(calls);
+
+    // The page's own recompute form lands on the same row and recomputes it.
+    const recomputed = await worker.fetch(submit("https://github.com/o/r/tree/aaa111"), env);
+    expect(recomputed.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    expect(slotsOf(db)).toBe(slots + 1);
+    const fresh = await worker.fetch(read("/api/v1/verdict/github/o/r/aaa111"), env);
+    expect(((await fresh.json()) as Record<string, unknown>).outdated).toBeNull();
   });
 });

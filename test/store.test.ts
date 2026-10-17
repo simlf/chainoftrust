@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { cacheKeyFor } from "../src/lib/target";
 import { hashIp, RELEASES_PER_DAY, Store } from "../src/store";
 import type { Report } from "../src/types";
@@ -71,11 +71,20 @@ function fakeDb(opts: { returning?: "row" | "none"; counterReadable?: boolean; b
               writeup,
               writeupModel,
               writeupDegradedReason,
-            ] = args as [string, string, string, string, string, string, string, string | null, string | null, string | null];
+              createdAt,
+            ] = args as [string, string, string, string, string, string, string, string | null, string | null, string | null, number];
             void host;
             void verdict;
             const existing = verdicts.find((v) => v.cache_key === cacheKey);
-            if (existing) {
+            // The recomputation form overwrites every column from the new
+            // write, including the row's age; the plain form keeps old prose.
+            if (existing && text.includes("writeup = excluded.writeup,")) {
+              existing.report_json = reportJson;
+              existing.writeup = writeup;
+              existing.writeup_model = writeupModel;
+              existing.writeup_degraded_reason = writeupDegradedReason;
+              existing.created_at = createdAt;
+            } else if (existing) {
               existing.report_json = reportJson;
               const effectiveWriteup = writeup ?? existing.writeup;
               existing.writeup_degraded_reason =
@@ -483,6 +492,30 @@ describe("why a report carries no writeup", () => {
     const found = await store.getVerdict(report.target.cacheKey);
     expect(found?.writeup).toBe("The installer does a thing.");
     expect(found?.writeupDegradedReason).toBeNull();
+  });
+
+  it("drops the old summary and restarts the row's age when a stale report is recomputed", async () => {
+    // A recomputation analysed newer checks or newer upstream facts, so the
+    // summary written over the old findings no longer describes the report.
+    // Keeping it (the plain write's COALESCE) would put prose about findings
+    // that may be gone next to findings it never saw.
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const store = new Store(db as never);
+    const report = reportAt("o", "r", "abc123");
+
+    await store.putVerdict(report, "Prose about the old findings.", "claude-haiku-4-5", null);
+    const before = (await store.getVerdict(report.target.cacheKey))!.createdAt;
+
+    vi.advanceTimersByTime(40 * 24 * 60 * 60 * 1000);
+    await store.putVerdict(report, null, null, "budget", { replace: true });
+
+    const found = await store.getVerdict(report.target.cacheKey);
+    expect(found?.writeup).toBeNull();
+    expect(found?.writeupModel).toBeNull();
+    expect(found?.writeupDegradedReason).toBe("budget");
+    expect(found!.createdAt, "the recomputed row is young again").toBeGreaterThan(before);
+    vi.useRealTimers();
   });
 
   it("treats an unrecognised stored value the same as no reason, never inventing one", async () => {

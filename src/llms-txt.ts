@@ -23,6 +23,8 @@ An npm or PyPI package's pinned report takes a \`?pkg=npm:name@version\` (or \`p
 
 A repository with no report yet answers with HTTP 404 and a JSON body naming the plain-HTML form that starts an analysis. Treat 404 as "not yet analysed," never as "clean."
 
+A report produced by an earlier version of the checks, or older than the site's maximum report age (30 days by default), carries a non-null \`outdated\` field (\`"outdated-checks"\` or \`"expired"\`) next to \`analyser_version\` and \`current_analyser_version\`. Its findings may not match what the current checks would say; it is recomputed the next time someone submits it, never by reading it.
+
 ## Verdicts
 
 - \`clean\` - no findings above informational severity across any check.

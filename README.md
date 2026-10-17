@@ -124,9 +124,17 @@ What this repository does instead:
 - `MODEL_BUDGET_CENTS_PER_MONTH`, a hard monthly ceiling checked before every
   model call. On reaching it the service **degrades to a deterministic verdict
   without prose** rather than refusing service or spending more.
-- Cache by commit SHA. The same commit is never analysed twice, and a cache hit
-  never costs an analysis. Reading an existing verdict at its own address costs
-  nothing at all: those URLs do no upstream work and are not rate limited.
+- Cache by commit SHA. A current report for a commit is never analysed again,
+  and a cache hit never costs an analysis. Reading an existing verdict at its
+  own address costs nothing at all: those URLs do no upstream work and are not
+  rate limited.
+- A stored report is recomputed, lazily, on its next submission when it was
+  produced by an older version of the checks (`ANALYSER_VERSION` in
+  `src/verdict/version.ts`, which also says when to bump it) or is older than
+  `REPORT_MAX_AGE_DAYS`. That recomputation is a fresh analysis charged to the
+  submitter like any other, and replaces the old row, so the next submission
+  is a plain hit again. Nothing recomputes on a schedule or on a read: a stale
+  report is still readable, marked as stale, with a button to resubmit it.
 - A repository that has moved to a newer commit still serves its last report by
   default, with a notice and an explicit "analyse the newer commit" action, so
   pasting the same URL twice never re-spends. That action is throttled to at
@@ -159,6 +167,7 @@ envelope. Raise the variable to spend more.
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Where the OpenAI-compatible call goes; only read in openrouter mode. Pointing it elsewhere is an egress decision |
 | `MODEL_RATE_MICRO_CENTS` | | `input,output` token rate in micro-cents for the budget guard. The built-in table only knows Anthropic models and prices anything else at its most expensive rate, so set this when `MODEL_ID` names anything else |
 | `FRESH_ANALYSES_PER_IP_PER_DAY` | `5` | A cache hit costs none of these |
+| `REPORT_MAX_AGE_DAYS` | `30` | A stored report older than this is recomputed on its next submission, even with the checks unchanged |
 | `CONTACT_EMAIL` | | Shown in the footer for corrections |
 
 Secrets: `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`,
@@ -190,7 +199,10 @@ A report on an npm or PyPI package carries a `?pkg=npm:name@version` (or
 published packages.
 
 Add `?format=json` to any report URL, or send `Accept: application/json` on a
-plain report URL. JSON responses are CORS-open and cached for an hour. Reports
+plain report URL. JSON responses are CORS-open and cached for an hour, except
+a stale one: a report from older checks or past its maximum age carries
+`"outdated": "outdated-checks"` or `"expired"` (null otherwise) and is not
+cacheable. Reports
 are generated on submission from the site, not on demand from the API, so an
 unanalysed target returns 404 rather than triggering work; that 404 body
 names the form that starts an analysis and notes that submitting one costs

@@ -1,3 +1,4 @@
+import { DEFAULT_REPORT_MAX_AGE_DAYS } from "./verdict/version";
 import type { SummaryProvider, TokenRate } from "./verdict/writeup";
 
 export interface Env {
@@ -7,6 +8,12 @@ export interface Env {
   MODEL_ID: string;
   FRESH_ANALYSES_PER_IP_PER_DAY: string;
   CONTACT_EMAIL: string;
+
+  /**
+   * Days a stored report is served before its next submission recomputes it
+   * even with the checks unchanged. Defaults to DEFAULT_REPORT_MAX_AGE_DAYS.
+   */
+  REPORT_MAX_AGE_DAYS?: string;
 
   /**
    * Where the OpenAI-compatible summary calls go. Only read when
@@ -38,6 +45,8 @@ export interface Config {
   modelId: string;
   modelRate?: TokenRate;
   ratePerDay: number;
+  /** See REPORT_MAX_AGE_DAYS. */
+  reportMaxAgeMs: number;
   contact: string;
   provider?: SummaryProvider;
   githubToken?: string;
@@ -54,6 +63,10 @@ export function readConfig(env: Env): Config {
     modelId: env.MODEL_ID || "claude-haiku-4-5",
     ...(rate ? { modelRate: rate } : {}),
     ratePerDay: intOr(env.FRESH_ANALYSES_PER_IP_PER_DAY, 5),
+    // Zero would recompute a report on every submission, so it falls back to
+    // the default rather than being honoured.
+    reportMaxAgeMs:
+      (intOr(env.REPORT_MAX_AGE_DAYS, 0) || DEFAULT_REPORT_MAX_AGE_DAYS) * 24 * 60 * 60 * 1000,
     contact: env.CONTACT_EMAIL || "contact@chainoftrust.dev",
     ...(provider ? { provider } : {}),
     ...(env.GITHUB_TOKEN ? { githubToken: env.GITHUB_TOKEN } : {}),
