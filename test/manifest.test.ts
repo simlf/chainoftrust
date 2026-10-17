@@ -23,6 +23,45 @@ describe("package manifest", () => {
     );
   });
 
+  it("does not count prepare as running on a registry install", () => {
+    // npm runs prepare for a git dependency or a source checkout, never for a
+    // published package installed from the registry. morluto/rea was reported
+    // as running a husky setup script on install when it does not.
+    const findings = analysePackageJson(
+      "package.json",
+      JSON.stringify({ scripts: { prepare: "node scripts/prepare.mjs" } }),
+    );
+    expect(findings.find((f) => f.concern === "install-path:lifecycle-scripts")?.severity).toBe(
+      "clean",
+    );
+    expect(findings.some((f) => f.severity === "warning" || f.severity === "critical")).toBe(false);
+    const prepare = findings.find((f) => f.concern === "install-path:prepare-script");
+    expect(prepare?.severity).toBe("note");
+    expect(prepare?.statement).toContain("not when installing the published package from the registry");
+  });
+
+  it("still warns about postinstall when prepare sits beside it", () => {
+    const findings = analysePackageJson(
+      "package.json",
+      JSON.stringify({ scripts: { prepare: "husky", postinstall: "node scripts/setup.js" } }),
+    );
+    const lifecycle = findings.find((f) => f.concern === "install-path:lifecycle-scripts");
+    expect(lifecycle?.severity).toBe("warning");
+    expect(lifecycle?.statement).toContain("1 lifecycle script automatically: postinstall");
+    expect(lifecycle?.statement).not.toContain("prepare");
+  });
+
+  it("ignores publisher-side scripts that never run for a consumer", () => {
+    const findings = analysePackageJson(
+      "package.json",
+      JSON.stringify({ scripts: { prepack: "tsc", prepublishOnly: "npm test", postpack: "rm -rf dist" } }),
+    );
+    expect(findings.find((f) => f.concern === "install-path:lifecycle-scripts")?.severity).toBe(
+      "clean",
+    );
+    expect(findings.some((f) => f.concern === "install-path:prepare-script")).toBe(false);
+  });
+
   it("names the executables the package puts on PATH", () => {
     const findings = analysePackageJson(
       "package.json",

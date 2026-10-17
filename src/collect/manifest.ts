@@ -10,7 +10,11 @@ import type { Finding } from "../types";
  * with its own verdict paragraph. It stays because the one positive was real.
  */
 
-const LIFECYCLE = ["preinstall", "install", "postinstall", "prepare"] as const;
+// Only these run when a published package is installed from the registry.
+// `prepare` runs for an install inside the package's own checkout and for a git
+// dependency, never for a registry install, so counting it here told readers a
+// husky setup step would execute on their machine when it would not.
+const LIFECYCLE = ["preinstall", "install", "postinstall"] as const;
 
 export function analysePackageJson(path: string, source: string): Finding[] {
   // Target content is untrusted input, and a manifest holding the four bytes
@@ -49,9 +53,22 @@ export function analysePackageJson(path: string, source: string): Finding[] {
       severity: "clean",
       concern: "install-path:lifecycle-scripts",
       statement:
-        "The package manifest declares no preinstall, install, postinstall or prepare script, so a package manager install does not execute code from this package.",
+        "The package manifest declares no preinstall, install or postinstall script, so installing it from the registry does not execute code from this package.",
       evidence: `${label(path)} scripts`,
       method: "file",
+    });
+  }
+
+  if (typeof scripts.prepare === "string") {
+    findings.push({
+      check: "install-path",
+      severity: "note",
+      concern: "install-path:prepare-script",
+      statement:
+        "The package declares a prepare script. It runs only when installing from a git URL or inside a source checkout, not when installing the published package from the registry. What it runs is quoted verbatim.",
+      evidence: `${label(path)} scripts`,
+      method: "file",
+      quote: `prepare: ${truncate(scripts.prepare)}`,
     });
   }
 
