@@ -39,15 +39,16 @@ export function attachSources(
  */
 function locate(finding: Finding, text: string): number[] {
   const all = text.split("\n");
-  const where = (re: RegExp, from = 0) =>
-    all.flatMap((line, i) => (i >= from && re.test(line) ? [i + 1] : [])).slice(0, 4);
+  const where = (re: RegExp, from = 0, to = all.length - 1) =>
+    all.flatMap((line, i) => (i >= from && i <= to && re.test(line) ? [i + 1] : [])).slice(0, 4);
 
   if (finding.evidence.endsWith(" scripts")) {
-    // Lifecycle names are searched from the scripts key on, so a nested
+    // Lifecycle names are searched only inside the scripts object, so an
     // "install" key elsewhere in the manifest is not mistaken for one.
     const scripts = where(/"scripts"\s*:/).slice(0, 1);
     if (scripts.length === 0) return [];
-    const lifecycle = where(/"(preinstall|install|postinstall|prepare)"\s*:/, scripts[0]! - 1);
+    const from = scripts[0]! - 1;
+    const lifecycle = where(/"(preinstall|install|postinstall|prepare)"\s*:/, from, objectEnd(all, from));
     return lifecycle.length > 0 ? lifecycle : scripts;
   }
   if (finding.evidence.endsWith(" bin")) return where(/"bin"\s*:/).slice(0, 1);
@@ -59,4 +60,26 @@ function locate(finding: Finding, text: string): number[] {
     if (at >= 0) return [at + 1];
   }
   return [];
+}
+
+/** Index of the line closing the first object opened on or after line `from`. */
+function objectEnd(lines: string[], from: number): number {
+  let depth = 0;
+  let opened = false;
+  let inString = false;
+  for (let i = from; i < lines.length; i++) {
+    const line = lines[i]!;
+    for (let j = 0; j < line.length; j++) {
+      const c = line[j];
+      if (inString) {
+        if (c === "\\") j++;
+        else if (c === '"') inString = false;
+      } else if (c === '"') inString = true;
+      else if (c === "{") {
+        depth++;
+        opened = true;
+      } else if (c === "}" && opened && --depth === 0) return i;
+    }
+  }
+  return lines.length - 1;
 }

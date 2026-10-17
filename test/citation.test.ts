@@ -188,6 +188,19 @@ describe("attachSources", () => {
     expect(findings[0]!.source?.lines).toEqual([6]);
   });
 
+  it("stops the lifecycle search where the scripts block closes", () => {
+    const withLifecycle =
+      '{\n  "scripts": {\n    "postinstall": "node setup.js"\n  },\n  "config": {\n    "install": "x"\n  }\n}';
+    const withoutLifecycle =
+      '{\n  "scripts": {\n    "test": "vitest \\"}\\""\n  },\n  "config": {\n    "install": "x"\n  }\n}';
+    const a = finding({ evidence: "package.json scripts" });
+    const b = finding({ evidence: "package.json scripts" });
+    attachSources([a], [{ path: "package.json", text: withLifecycle }]);
+    attachSources([b], [{ path: "package.json", text: withoutLifecycle }]);
+    expect(a.source?.lines).toEqual([3]);
+    expect(b.source?.lines).toEqual([2]);
+  });
+
   it("attaches nothing when the file was not read, the citation is not a file, or no line is known", () => {
     const findings = [
       finding({ evidence: "setup.sh:3" }),
