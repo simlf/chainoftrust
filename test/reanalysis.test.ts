@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Env } from "../src/env";
 import worker, { MIN_REANALYSIS_INTERVAL_MS } from "../src/index";
+import { ANALYSER_VERSION } from "../src/verdict/version";
 
 /**
  * A stand-in for the D1 statements the Worker issues on the submit and lookup
@@ -12,12 +13,22 @@ function fakeDb() {
   const counters = new Map<string, number>();
   const verdicts = new Map<
     string,
-    { report_json: string; owner: string; name: string; created_at: number }
+    {
+      report_json: string;
+      owner: string;
+      name: string;
+      writeup: string | null;
+      writeup_model: string | null;
+      writeup_degraded_reason: string | null;
+      created_at: number;
+    }
   >();
+  const faults = { budgetRead: false };
 
   return {
     counters,
     verdicts,
+    faults,
     prepare(sql: string) {
       const text = sql.replace(/\s+/g, " ").trim();
       let args: unknown[] = [];
@@ -28,12 +39,20 @@ function fakeDb() {
         },
         async run() {
           if (text.startsWith("DELETE FROM rate_limits WHERE day <")) return;
-          if (text.startsWith("UPDATE rate_limits SET count = count - 1")) return;
+          if (text.startsWith("UPDATE rate_limits SET count = count - 1")) {
+            const key = `${args[0]}|${args[1]}`;
+            const count = counters.get(key) ?? 0;
+            if (count > 0) counters.set(key, count - 1);
+            return;
+          }
           if (text.startsWith("INSERT INTO verdicts")) {
             verdicts.set(String(args[0]), {
               report_json: String(args[6]),
               owner: String(args[2]),
               name: String(args[3]),
+              writeup: args[7] as string | null,
+              writeup_model: args[8] as string | null,
+              writeup_degraded_reason: args[9] as string | null,
               created_at: Date.now(),
             });
             return;
@@ -67,7 +86,10 @@ function fakeDb() {
               .sort((a, b) => b.created_at - a.created_at);
             return matches[0] ? toRow(matches[0]) : null;
           }
-          if (text.startsWith("SELECT micro_cents FROM model_spend")) return null;
+          if (text.startsWith("SELECT micro_cents FROM model_spend")) {
+            if (faults.budgetRead) throw new Error("storage unavailable");
+            return null;
+          }
           throw new Error(`unmodelled statement: ${text}`);
         },
       };
@@ -75,12 +97,18 @@ function fakeDb() {
     },
   };
 
-  function toRow<T>(row: { report_json: string; created_at: number }): T {
+  function toRow<T>(row: {
+    report_json: string;
+    writeup: string | null;
+    writeup_model: string | null;
+    writeup_degraded_reason: string | null;
+    created_at: number;
+  }): T {
     return {
       report_json: row.report_json,
-      writeup: null,
-      writeup_model: null,
-      writeup_degraded_reason: null,
+      writeup: row.writeup,
+      writeup_model: row.writeup_model,
+      writeup_degraded_reason: row.writeup_degraded_reason,
       created_at: row.created_at,
     } as T;
   }
@@ -88,12 +116,12 @@ function fakeDb() {
 
 const slotsOf = (db: ReturnType<typeof fakeDb>) =>
   [...db.counters.entries()]
-    .filter(([key]) => !key.startsWith("resolve:"))
+    .filter(([key]) => !key.startsWith("resolve:") && !key.startsWith("release:"))
     .map(([, count]) => count)
     .reduce((a, b) => a + b, 0);
 
 /** GitHub responses for a repo whose default-branch head can be moved between requests. */
-function stubGithub(head: { sha: string }) {
+function stubGithub(head: { sha: string; providerDown?: boolean }) {
   const REPO = {
     full_name: "o/r",
     description: null,
@@ -128,6 +156,7 @@ function stubGithub(head: { sha: string }) {
       });
     }
     if (url === "https://openrouter.test/v1/chat/completions") {
+      if (head.providerDown) return new Response("unavailable", { status: 503 });
       return new Response(
         JSON.stringify({ choices: [{ message: { content: "Fine." } }] }),
         { headers: { "content-type": "application/json" } },
@@ -321,5 +350,217 @@ describe("a new head commit on an already-analysed repository", () => {
     );
     expect(res.headers.get("location")).toContain("/r/github/o/r/deadbeef");
     expect(slotsOf(db)).toBe(slotsAfterFirst + 1);
+  });
+});
+
+describe("a stored report produced by older checks, or past its maximum age", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** Rewrite the stored row as if an earlier deploy's checks had written it. */
+  function markOlderChecks(db: ReturnType<typeof fakeDb>, version?: number) {
+    for (const row of db.verdicts.values()) {
+      const report = JSON.parse(row.report_json) as Record<string, unknown>;
+      if (version === undefined) delete report.analyserVersion;
+      else report.analyserVersion = version;
+      row.report_json = JSON.stringify(report);
+    }
+  }
+
+  it("serves a report from the current checks without recomputing it", async () => {
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const stored = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(stored.analyserVersion, "a fresh report is stamped").toBe(ANALYSER_VERSION);
+    const slots = slotsOf(db);
+    const calls = fetchSpy.mock.calls.length;
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(slotsOf(db), "a current hit spends no analysis").toBe(slots);
+    expect(fetchSpy.mock.calls.length, "only the two resolving calls").toBe(calls + 2);
+  });
+
+  it.each([
+    ["with no version at all, as every report stored before the stamp", undefined],
+    ["with an older version", ANALYSER_VERSION - 1],
+  ])("recomputes a report %s, then serves the recomputation", async (_label, version) => {
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db, version);
+    const slots = slotsOf(db);
+    const providerCalls = () =>
+      fetchSpy.mock.calls.filter(([u]) => String(u).includes("openrouter")).length;
+    const providerBefore = providerCalls();
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    expect(slotsOf(db), "the recomputation is a fresh analysis, charged as one").toBe(
+      slots + 1,
+    );
+    expect(providerCalls(), "and gets a fresh summary").toBe(providerBefore + 1);
+    expect(db.verdicts.size, "it replaces the old row rather than adding one").toBe(1);
+    const replaced = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(replaced.analyserVersion).toBe(ANALYSER_VERSION);
+
+    // One visitor cannot turn one stale report into repeated runs: the
+    // recomputation is current, so every later submission is a plain hit.
+    for (let i = 0; i < 10; i++) await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+    expect(providerCalls()).toBe(providerBefore + 1);
+  });
+
+  it("recomputes a report past the maximum age, and not one inside it", async () => {
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const slots = slotsOf(db);
+
+    vi.advanceTimersByTime(29 * DAY);
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db), "29 days old is inside the default 30").toBe(slots);
+
+    vi.advanceTimersByTime(2 * DAY);
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(slotsOf(db), "31 days old is recomputed").toBe(slots + 1);
+
+    // The recomputation restarted the row's age, so the next one is a hit.
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+  });
+
+  it("honours a configured maximum age", async () => {
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const env = { ...envWith(db), REPORT_MAX_AGE_DAYS: "2" };
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    const slots = slotsOf(db);
+    vi.advanceTimersByTime(3 * DAY);
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db)).toBe(slots + 1);
+  });
+
+  it("serves the stale report instead of a refusal once the visitor's fresh analyses are spent", async () => {
+    // A recomputation is a fresh analysis, so the per-address limit applies
+    // to it exactly as it does to a first analysis; the stale report it would
+    // have replaced is still readable for free.
+    const db = fakeDb();
+    const env = { ...envWith(db), FRESH_ANALYSES_PER_IP_PER_DAY: "1" };
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db);
+
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    const stored = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(stored.analyserVersion, "nothing was recomputed").toBeUndefined();
+  });
+
+  it("serves the stale report when its recomputation fails, and gives the slot back", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db);
+    const slots = slotsOf(db);
+
+    db.faults.budgetRead = true;
+    const res = await worker.fetch(submit("o/r"), env);
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    const stored = JSON.parse([...db.verdicts.values()][0]!.report_json);
+    expect(stored.analyserVersion, "nothing was recomputed").toBeUndefined();
+    expect(slotsOf(db), "the failed attempt's slot was released").toBe(slots);
+  });
+
+  it("keeps the summary when an expired report recomputes to the same findings without one", async () => {
+    vi.useFakeTimers();
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const head = { sha: "aaa111", providerDown: false };
+    stubGithub(head);
+
+    await worker.fetch(submit("o/r"), env);
+    expect([...db.verdicts.values()][0]!.writeup).toBe("Fine.");
+
+    vi.advanceTimersByTime(31 * DAY);
+    head.providerDown = true;
+    const slots = slotsOf(db);
+    await worker.fetch(submit("o/r"), env);
+    expect(slotsOf(db), "it was recomputed").toBe(slots + 1);
+
+    const row = [...db.verdicts.values()][0]!;
+    expect(row.writeup).toBe("Fine.");
+    expect(row.writeup_model).toBe("claude-haiku-4-5");
+    expect(row.writeup_degraded_reason).toBeNull();
+  });
+
+  it("drops the summary when the recomputation comes from newer checks and gets none", async () => {
+    const db = fakeDb();
+    const env = envWithProvider(db);
+    const head = { sha: "aaa111", providerDown: false };
+    stubGithub(head);
+
+    await worker.fetch(submit("o/r"), env);
+    expect([...db.verdicts.values()][0]!.writeup).toBe("Fine.");
+
+    markOlderChecks(db);
+    head.providerDown = true;
+    await worker.fetch(submit("o/r"), env);
+
+    const row = [...db.verdicts.values()][0]!;
+    expect(JSON.parse(row.report_json).analyserVersion).toBe(ANALYSER_VERSION);
+    expect(row.writeup).toBeNull();
+    expect(row.writeup_degraded_reason).toBe("error");
+  });
+
+  it("marks a stale report as such when read, and recomputes nothing on a read", async () => {
+    const db = fakeDb();
+    const env = envWith(db);
+    const fetchSpy = stubGithub({ sha: "aaa111" });
+
+    await worker.fetch(submit("o/r"), env);
+    markOlderChecks(db);
+    const slots = slotsOf(db);
+    const calls = fetchSpy.mock.calls.length;
+
+    const page = await worker.fetch(read("/r/github/o/r/aaa111"), env);
+    expect(page.status, "reading is never refused").toBe(200);
+    expect(page.headers.get("cache-control"), "and a stale page is not cacheable").toBeNull();
+    const body = await page.text();
+    expect(body).toContain("earlier version of the checks");
+    expect(body).toContain('name="target" value="https://github.com/o/r/tree/aaa111"');
+
+    const api = await worker.fetch(read("/api/v1/verdict/github/o/r/aaa111"), env);
+    expect(api.headers.get("cache-control")).toBe("no-store");
+    const payload = (await api.json()) as Record<string, unknown>;
+    expect(payload.outdated).toBe("outdated-checks");
+    expect(payload.analyser_version).toBe(0);
+    expect(payload.current_analyser_version).toBe(ANALYSER_VERSION);
+
+    expect(slotsOf(db)).toBe(slots);
+    expect(fetchSpy.mock.calls.length, "a read reaches nothing upstream").toBe(calls);
+
+    // The page's own recompute form lands on the same row and recomputes it.
+    const recomputed = await worker.fetch(submit("https://github.com/o/r/tree/aaa111"), env);
+    expect(recomputed.headers.get("location")).toContain("/r/github/o/r/aaa111");
+    expect(slotsOf(db)).toBe(slots + 1);
+    const fresh = await worker.fetch(read("/api/v1/verdict/github/o/r/aaa111"), env);
+    expect(((await fresh.json()) as Record<string, unknown>).outdated).toBeNull();
   });
 });

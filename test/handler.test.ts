@@ -18,8 +18,9 @@ function fakeDb(opts: { failVerdictWrites?: boolean } = {}) {
   const counters = new Map<string, number>();
   const verdicts = new Map<string, FakeRow>();
   // A monotonic stand-in for wall-clock order: tests care about which insert
-  // came first, not real elapsed time.
-  let seq = 0;
+  // came first, not real elapsed time. Anchored at the real clock so a stored
+  // report is not past its maximum age the moment it is written.
+  let seq = Date.now();
 
   return {
     counters,

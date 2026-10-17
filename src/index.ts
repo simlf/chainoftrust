@@ -8,6 +8,7 @@ import type { Report, StoredVerdict } from "./types";
 import { badgeSvg } from "./ui/badge";
 import { homePage, messagePage, verdictPage, verdictPath } from "./ui/pages";
 import { buildReport } from "./verdict/score";
+import { ANALYSER_VERSION, staleness, type Staleness } from "./verdict/version";
 import { writeUp } from "./verdict/writeup";
 
 /** Bounded per analysis. A Worker that cannot loop cannot run up a bill. */
@@ -60,11 +61,21 @@ function edgeCache(): Cache | null {
  * into the key or a cached HTML page would be served to an agent that asked
  * for JSON. Normalising `format` into the query does that: every other
  * verdict-relevant input (owner, name, sha, pkg, newer) is already in the URL.
+ *
+ * The analyser version is folded in too. A SHA-pinned report is not immutable
+ * once the checks can change: a recomputation replaces the row behind the
+ * same URL. With the version in the key, a deploy that bumps it misses every
+ * entry the previous checks wrote, at once, rather than serving them until
+ * they age out. A recomputation for age alone keeps the version, and needs no
+ * key change: an entry lives for an hour (the response's own max-age), and a
+ * stale report is never put (see the route), so the newest entry for a URL
+ * can only ever predate its row's recomputation by under an hour.
  */
 function verdictCacheKey(url: URL, wantsJson: boolean): Request {
   const keyUrl = new URL(url.toString());
   if (wantsJson) keyUrl.searchParams.set("format", "json");
   else keyUrl.searchParams.delete("format");
+  keyUrl.searchParams.set("analyser", String(ANALYSER_VERSION));
   return new Request(keyUrl.toString(), { method: "GET" });
 }
 
@@ -123,8 +134,8 @@ export default {
 
       const verdict = matchVerdictPath(url.pathname);
       if (request.method === "GET" && verdict) {
-        // Only the SHA-pinned form goes near the edge cache: its content is
-        // immutable by construction (the report is keyed by commit SHA), so a
+        // Only the SHA-pinned form goes near the edge cache: its content only
+        // changes when the report is recomputed (see verdictCacheKey), so a
         // hit can be served without touching D1 at all. The repo-latest form
         // is mutable and is never cached.
         if (verdict.sha) {
@@ -134,18 +145,24 @@ export default {
             const hit = await cache.match(key);
             if (hit) return hit;
           }
-          const res = await handleVerdictLookup(request, url, store, config, verdict);
-          // Anything but a 200 (a missing report, an error page) is a state
-          // that can change the moment someone runs the analysis, so only the
-          // immutable success is ever put.
-          if (cache && res.status === 200) {
+          const { res, cacheable } = await handleVerdictLookup(
+            request,
+            url,
+            store,
+            config,
+            verdict,
+          );
+          // Anything but a current report (a missing one, an error page, one
+          // the next submission will recompute) is a state that can change
+          // the moment someone submits it, so only a current one is ever put.
+          if (cache && cacheable) {
             const put = cache.put(key, res.clone()).catch(() => {});
             if (ctx) ctx.waitUntil(put);
             else await put;
           }
           return res;
         }
-        return await handleVerdictLookup(request, url, store, config, verdict);
+        return (await handleVerdictLookup(request, url, store, config, verdict)).res;
       }
 
       return messagePage({
@@ -228,9 +245,15 @@ async function handleAnalyse(
   }
 
   // Cache by commit SHA. A hit needs no collection and no model call, so it
-  // costs no analysis slot however many times it is asked for.
+  // costs no analysis slot however many times it is asked for. A hit that is
+  // stale (older checks, or past the maximum age) is recomputed instead, as a
+  // fresh analysis with every counter below applied; the recomputation
+  // replaces the row, so the next submission is a plain hit again and one
+  // visitor cannot turn one stale report into repeated runs.
   const cached = await store.getVerdict(resolved.target.cacheKey);
-  if (cached) return redirect(verdictPath(cached.report));
+  if (cached && !staleness(cached, config.reportMaxAgeMs)) {
+    return redirect(verdictPath(cached.report));
+  }
 
   // A submission that named no explicit ref or commit tracks the repository's
   // moving head, so pasting the same URL twice can resolve to a new commit
@@ -251,8 +274,14 @@ async function handleAnalyse(
     }
   }
 
+  // A stale report that cannot be recomputed right now is still the best
+  // answer on file, and its page already says it is stale. Reading it stays
+  // free, so a spent allowance or a failed recomputation lands there.
   const limit = await store.consumeRateLimit(ipHash, config.ratePerDay);
-  if (!limit.allowed) return refusedPage(limit, config);
+  if (!limit.allowed) {
+    if (cached) return redirect(verdictPath(cached.report));
+    return refusedPage(limit, config);
+  }
 
   try {
     const evidence = await collect(fetcher, resolved);
@@ -267,15 +296,41 @@ async function handleAnalyse(
     });
     await store.recordSpend(summary.microCents);
 
-    await store.putVerdict(report, summary.text, summary.model, summary.degradedReason);
+    // A recomputation must not lose a summary to a degraded model call when
+    // the summary still describes exactly what the new report says.
+    const kept = summary.text === null && cached && sameFindings(cached.report, report);
+    await store.putVerdict(
+      report,
+      kept ? cached.writeup : summary.text,
+      kept ? cached.writeupModel : summary.model,
+      kept && cached.writeup !== null ? null : summary.degradedReason,
+      { replace: cached !== null },
+    );
     return redirect(verdictPath(report));
   } catch (err) {
     // The analysis produced nothing, so the slot goes back, up to the daily
     // allowance the release path enforces itself. Past that a failure costs the
     // slot, which is what bounds a target that fails on every attempt.
     await store.releaseRateLimit(ipHash);
+    if (cached) return redirect(verdictPath(cached.report));
     throw err;
   }
+}
+
+/**
+ * Whether a summary written over one report still describes another. Finding
+ * statements are compared by what they are about, not their wording, because
+ * some carry a day count ("the last push was 78 days ago") that moves on its
+ * own between two runs over the same commit.
+ */
+function sameFindings(before: Report, after: Report): boolean {
+  const identity = (report: Report) =>
+    JSON.stringify(report.findings.map((f) => [f.check, f.concern, f.severity, f.evidence]));
+  return (
+    (before.analyserVersion ?? 0) === (after.analyserVersion ?? 0) &&
+    before.verdict === after.verdict &&
+    identity(before) === identity(after)
+  );
 }
 
 /**
@@ -429,13 +484,17 @@ function wantsJsonFor(request: Request, url: URL): boolean {
   );
 }
 
+/**
+ * `cacheable` is true only for a current report: a 404, or a report the next
+ * submission would recompute, must not be pinned to the edge.
+ */
 async function handleVerdictLookup(
   request: Request,
   url: URL,
   store: Store,
   config: Config,
   match: VerdictMatch,
-): Promise<Response> {
+): Promise<{ res: Response; cacheable: boolean }> {
   const wantsJson = wantsJsonFor(request, url);
 
   const stored: StoredVerdict | null = match.sha
@@ -449,7 +508,7 @@ async function handleVerdictLookup(
 
   if (!stored) {
     if (wantsJson) {
-      return json(
+      const res = json(
         {
           error: "not_analysed",
           message:
@@ -461,8 +520,9 @@ async function handleVerdictLookup(
         },
         404,
       );
+      return { res, cacheable: false };
     }
-    return messagePage({
+    const res = messagePage({
       title: "No report yet - chainoftrust.dev",
       heading: "No report for that yet",
       message:
@@ -471,10 +531,16 @@ async function handleVerdictLookup(
       status: 404,
       path: url.pathname,
     });
+    return { res, cacheable: false };
   }
 
+  // A stale report is still shown, never hidden: reading stays free and is
+  // never refused, and a report is only ever recomputed by a submission, which
+  // is where the counters live. It is marked, not presented as current.
+  const stale: Staleness | null = staleness(stored, config.reportMaxAgeMs);
+
   if (wantsJson) {
-    return json(
+    const res = json(
       {
         verdict: stored.report.verdict,
         target: stored.report.target,
@@ -489,9 +555,14 @@ async function handleVerdictLookup(
         scorecard: stored.report.scorecard ?? null,
         stats: stored.report.stats,
         generated_at: stored.report.generatedAt,
+        analyser_version: stored.report.analyserVersion ?? 0,
+        current_analyser_version: ANALYSER_VERSION,
+        outdated: stale,
       },
       200,
+      stale === null,
     );
+    return { res, cacheable: stale === null };
   }
 
   // The "newer" decoration only ever comes from a redirect this Worker itself
@@ -504,21 +575,24 @@ async function handleVerdictLookup(
       ? newerParam
       : null;
 
-  return verdictPage(stored, config.contact, Boolean(match.sha), newerCommit);
+  return {
+    res: verdictPage(stored, config.contact, Boolean(match.sha), newerCommit, stale),
+    cacheable: stale === null,
+  };
 }
 
 function redirect(location: string): Response {
   return new Response(null, { status: 303, headers: { location } });
 }
 
-function json(payload: unknown, status: number): Response {
+function json(payload: unknown, status: number, cacheable = status === 200): Response {
   return new Response(JSON.stringify(payload, null, 2), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       // Verdicts are public by design, so an agent can read one cross-origin.
       "access-control-allow-origin": "*",
-      "cache-control": status === 200 ? "public, max-age=3600" : "no-store",
+      "cache-control": cacheable ? "public, max-age=3600" : "no-store",
     },
   });
 }

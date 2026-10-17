@@ -1,4 +1,5 @@
 import type { Evidence, Report, Severity, Verdict } from "../types";
+import { ANALYSER_VERSION } from "./version";
 
 const WEIGHT: Record<Severity, number> = {
   clean: 0,
@@ -59,6 +60,7 @@ export function buildReport(evidence: Evidence, now: Date): Report {
     stats: evidence.stats,
     ...(evidence.scorecard ? { scorecard: evidence.scorecard } : {}),
     generatedAt: now.toISOString(),
+    analyserVersion: ANALYSER_VERSION,
   };
 }
 

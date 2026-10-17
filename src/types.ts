@@ -165,6 +165,11 @@ export interface Report {
   stats: Evidence["stats"];
   scorecard?: { score: number; date: string };
   generatedAt: string;
+  /**
+   * The ANALYSER_VERSION (src/verdict/version.ts) that produced this report.
+   * Absent on a report stored before the stamp existed, which reads as 0.
+   */
+  analyserVersion?: number;
 }
 
 export interface StoredVerdict {

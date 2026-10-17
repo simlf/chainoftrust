@@ -151,11 +151,13 @@ public repository is the failure this product cannot afford.
 
 Two guarantees the launch depends on, both enforced in `handleAnalyse`
 (`src/index.ts`) and proven in `test/reanalysis.test.ts`: the same repository
-at the same commit SHA is never re-collected or re-summarised (exact-key cache
-hit, before any rate limit is even consumed); a submission naming no explicit
-ref or commit that already has a report is served that report by default, with
-a visible newer-commit notice and an explicit refresh form, not silently
-re-analysed. Re-analysing is gated by `MIN_REANALYSIS_INTERVAL_MS` per
+at the same commit SHA is never re-collected or re-summarised while its report
+is current (exact-key cache hit, before any rate limit is even consumed; a
+stale one, per `staleness()` in `src/verdict/version.ts`, is recomputed as a
+fully charged fresh analysis that replaces the row); a submission naming no
+explicit ref or commit that already has a report is served that report by
+default, with a visible newer-commit notice and an explicit refresh form, not
+silently re-analysed. Re-analysing is gated by `MIN_REANALYSIS_INTERVAL_MS` per
 repository, composed with the existing per-IP counters in `store.ts` rather
 than duplicating them. An explicit ref or commit in the submitted URL
 (`target.requestedRef !== ""`) always bypasses this gate: pasting a pin is
@@ -199,11 +201,11 @@ rather than the SHA-pinned `immutable`-style caching report pages use.
 The SHA-pinned verdict route is edge-cached with the Cache API in
 `src/index.ts` (`edgeCache`/`verdictCacheKey`), and the Cache API keys on URL
 alone while the same URL answers HTML or JSON depending on the Accept header.
-`verdictCacheKey` folds the negotiated format into the key's query string;
-any new header-dependent variation on that route needs the same treatment or
-one format's cached body gets served to the other's clients. Only 200s on the
-SHA-pinned form are ever put; the repo-latest route, 404s and error pages are
-mutable and stay uncached (`test/edge-cache.test.ts` proves all of it against
+`verdictCacheKey` folds the negotiated format and `ANALYSER_VERSION` into the
+key's query string; any new header-dependent variation on that route needs the
+same treatment or one format's cached body gets served to the other's clients.
+Only 200s of a current (not stale) report on the SHA-pinned form are ever put;
+the repo-latest route, 404s and error pages are mutable and stay uncached (`test/edge-cache.test.ts` proves all of it against
 a fake D1 that counts reads).
 
 ## `npm run dev` does not currently boot locally

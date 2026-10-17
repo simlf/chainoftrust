@@ -3,13 +3,15 @@ import type { Env } from "../src/env";
 import worker from "../src/index";
 import { cacheKeyFor } from "../src/lib/target";
 import type { Report } from "../src/types";
+import { ANALYSER_VERSION } from "../src/verdict/version";
 
 /**
- * The edge-cache contract this suite proves: a SHA-pinned verdict URL is
- * immutable by construction, so a repeat view of a shared link must be served
- * from the Cache API without a single D1 statement running; everything whose
- * content can change (the repo-latest route, a 404 for a report that does not
- * exist yet, error pages) must never be put into that cache.
+ * The edge-cache contract this suite proves: a SHA-pinned verdict URL only
+ * changes when its report is recomputed, so a repeat view of a shared link
+ * must be served from the Cache API without a single D1 statement running;
+ * everything whose content can change (the repo-latest route, a 404 for a
+ * report that does not exist yet, error pages, a stale report the next
+ * submission recomputes) must never be put into that cache.
  */
 
 function report(): Report {
@@ -35,6 +37,7 @@ function report(): Report {
       fetchBudgetExhausted: false,
     },
     generatedAt: "2026-08-10T00:00:00.000Z",
+    analyserVersion: ANALYSER_VERSION,
   };
 }
 
@@ -45,10 +48,12 @@ function report(): Report {
  */
 function fakeDb() {
   const byCacheKey = new Map<string, string>();
+  const createdAt = new Map<string, number>();
   const db = {
     reads: 0,
-    seed(r: Report) {
+    seed(r: Report, at: number = Date.now()) {
       byCacheKey.set(r.target.cacheKey, JSON.stringify(r));
+      createdAt.set(r.target.cacheKey, at);
     },
     prepare(sql: string) {
       const text = sql.replace(/\s+/g, " ").trim();
@@ -64,8 +69,9 @@ function fakeDb() {
         async first<T>(): Promise<T | null> {
           db.reads++;
           if (text.includes("FROM verdicts WHERE cache_key = ?")) {
-            const json = byCacheKey.get(String(args[0]));
-            return json ? (row(json) as T) : null;
+            const key = String(args[0]);
+            const json = byCacheKey.get(key);
+            return json ? (row(json, createdAt.get(key) ?? 0) as T) : null;
           }
           if (
             text.includes("FROM verdicts") &&
@@ -74,8 +80,11 @@ function fakeDb() {
             // Covers both getLatestForRepo and the getVerdictAtCommit
             // fallback; either way, serve the one seeded report for o/r.
             const [owner, name] = args as [string, string];
-            const seeded = byCacheKey.get(cacheKeyFor("o", "r", "abc123"));
-            return owner === "o" && name === "r" && seeded ? (row(seeded) as T) : null;
+            const key = cacheKeyFor("o", "r", "abc123");
+            const seeded = byCacheKey.get(key);
+            return owner === "o" && name === "r" && seeded
+              ? (row(seeded, createdAt.get(key) ?? 0) as T)
+              : null;
           }
           throw new Error(`unmodelled statement: ${text}`);
         },
@@ -86,13 +95,13 @@ function fakeDb() {
   return db;
 }
 
-function row(json: string) {
+function row(json: string, createdAt: number) {
   return {
     report_json: json,
     writeup: null,
     writeup_model: null,
     writeup_degraded_reason: null,
-    created_at: 0,
+    created_at: createdAt,
   };
 }
 
@@ -234,6 +243,70 @@ describe("edge caching the SHA-pinned verdict route", () => {
     db.seed(report());
     const res = await worker.fetch(get("/r/github/o/r/abc123"), envWith(db));
     expect(res.status).toBe(200);
+  });
+});
+
+describe("the edge cache never pins a stale verdict", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  function olderChecks(): Report {
+    const r = report();
+    delete r.analyserVersion;
+    return r;
+  }
+
+  it("never puts a report produced by older checks", async () => {
+    const caches = fakeCaches();
+    vi.stubGlobal("caches", caches);
+    const db = fakeDb();
+    db.seed(olderChecks());
+    const env = envWith(db);
+
+    const res = await worker.fetch(get("/r/github/o/r/abc123"), env);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("earlier version of the checks");
+    const json = await worker.fetch(get("/r/github/o/r/abc123?format=json"), env);
+    expect(json.status).toBe(200);
+    expect(caches.default.puts, "a report the next submission recomputes is not put").toBe(0);
+
+    // Once recomputed, the same URL serves the recomputation, not the old body.
+    db.seed(report());
+    const fresh = await worker.fetch(get("/r/github/o/r/abc123"), env);
+    expect(await fresh.text()).not.toContain("earlier version of the checks");
+    expect(caches.default.puts).toBe(1);
+  });
+
+  it("never puts a report past its maximum age", async () => {
+    const caches = fakeCaches();
+    vi.stubGlobal("caches", caches);
+    const db = fakeDb();
+    db.seed(report(), Date.now() - 31 * DAY);
+
+    const res = await worker.fetch(get("/r/github/o/r/abc123"), envWith(db));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain("old enough");
+    expect(caches.default.puts).toBe(0);
+  });
+
+  it("misses every entry written under a previous analyser version", async () => {
+    // What a deploy that bumps the version leaves behind at the edge: bodies
+    // cached under the old key, unversioned before this change and carrying
+    // the old number after it. None of them may be served.
+    const caches = fakeCaches();
+    vi.stubGlobal("caches", caches);
+    const stale = { body: "STALE VERDICT FROM OLDER CHECKS", status: 200, headers: [] };
+    caches.stored.set("https://chainoftrust.dev/r/github/o/r/abc123", stale);
+    caches.stored.set(
+      `https://chainoftrust.dev/r/github/o/r/abc123?analyser=${ANALYSER_VERSION - 1}`,
+      stale,
+    );
+    const db = fakeDb();
+    db.seed(report());
+
+    const res = await worker.fetch(get("/r/github/o/r/abc123"), envWith(db));
+    expect(await res.text()).not.toContain("STALE VERDICT");
+    expect(db.reads, "the miss went to D1 for the current report").toBeGreaterThan(0);
+    expect(caches.default.puts).toBe(1);
   });
 });
 
