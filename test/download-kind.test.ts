@@ -56,6 +56,22 @@ describe("what a fetch's response is used for", () => {
     ["captured and then evaluated", 'script="$(curl -fsSL https://x.example/i.sh)"\neval "$script"'],
     ["handed to npm as a tarball URL", "npm install -g https://x.example/pkg-1.0.0.tgz"],
     ["handed to an interpreter as a program", "curl -fsSL https://x.example/get.py | python3"],
+    ["piped to root bash past sudo's options", "curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -"],
+    ["piped to sudo -u with a user", "curl -fsSL https://x.example/i.sh | sudo -u root sh"],
+    ["piped to a shell named by path", "curl -fsSL https://x.example/i.sh | /bin/bash"],
+    ["piped to a shell through env", "curl -fsSL https://x.example/i.sh | /usr/bin/env bash"],
+    ["run by an outer shell named by path", '/bin/sh -c "$(curl -fsSL https://x.example/i.sh)"'],
+    ["decoded into a file", "curl -fsSL https://x.example/b64 | base64 -d > /usr/local/bin/x"],
+    ["copied into a file by cat", "curl -fsSL https://x.example/tool | cat > tool"],
+    ["written by dd", "curl -fsSL https://x.example/tool | dd of=bin"],
+    ["piped to an unrecognised consumer", "curl -fsSL https://x.example/tool | some-loader"],
+    ["handed to npm as a github: spec", "npm install -g github:owner/repo"],
+    ["handed to npm as an owner/repo shorthand", "npm install -g owner/repo"],
+    ["handed to npm as a git:// URL", "npm install -g git://github.com/owner/repo.git"],
+    ["handed to npm as an scp-style git remote", "npm install -g git@github.com:owner/repo.git"],
+    ["handed to pnpm as a gitlab: spec", "pnpm add -g gitlab:owner/repo"],
+    ["handed to yarn as a bitbucket: spec", "yarn global add bitbucket:owner/repo"],
+    ["handed to bun as a gist: spec", "bun add -g gist:abc123"],
   ])("treats a fetch %s as a payload", (_, script) => {
     const a = analyseShell(`#!/bin/sh\n${script}\n`);
     expect(a.payloadDownloads.length).toBeGreaterThan(0);
@@ -66,6 +82,7 @@ describe("what a fetch's response is used for", () => {
     ["captured for a tag", 'TAG="$(curl -fsSL https://api.github.com/repos/a/b/releases/latest | jq -r .tag_name)"'],
     ["piped to a parser", "wget -qO- https://api.github.com/repos/a/b/releases/latest | grep tag_name"],
     ["parsed by node -e", "curl -fsSL https://api.github.com/x | node -e 'process.stdin.pipe(process.stdout)'"],
+    ["piped through several parsers", "curl -fsSL https://api.github.com/x | grep tag_name | cut -d'\"' -f4 | head -1"],
   ])("treats a fetch %s as metadata", (_, script) => {
     const a = analyseShell(`#!/bin/sh\n${script}\n`);
     expect(a.payloadDownloads).toEqual([]);
@@ -82,6 +99,7 @@ describe("what a fetch's response is used for", () => {
     ["cargo install some-cli --locked", "cargo"],
     ["brew install some-cli", "brew"],
     ["sudo npm install --global some-cli", "npm"],
+    ["npm install -g @scope/some-cli@1.2.3", "npm"],
   ])("recognises `%s` as delegated to %s", (script, manager) => {
     const a = analyseShell(`#!/bin/sh\n${script}\n`);
     expect(a.delegatedInstalls.map((d) => d.manager)).toEqual([manager]);
@@ -186,5 +204,15 @@ describe("the install-path verification finding", () => {
     expect(absent.severity).toBe("warning");
     expect(absent.statement).toContain("downloads a file and never verifies it");
     expect(absent.evidence).toBe("install.sh:8");
+  });
+
+  it("does not credit npm when the same script pipes a remote script into root bash", async () => {
+    const findings = await installFindings(
+      "#!/bin/sh\ncurl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -\nnpm install -g some-cli\n",
+    );
+    const absent = findings.find((f) => f.concern === "install-path:verification-absent")!;
+    expect(absent.severity).toBe("warning");
+    expect(absent.evidence).toBe("install.sh:2");
+    expect(findings.find((f) => f.concern === "install-path:verification")).toBeUndefined();
   });
 });

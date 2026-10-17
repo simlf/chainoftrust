@@ -275,6 +275,10 @@ const MESSAGE_COMMAND =
 const CONSUMES_PAYLOAD =
   /^(sh|bash|zsh|dash|ksh|fish|eval|source|\.|iex|Invoke-Expression|python3?|node|perl|ruby|tar|bsdtar|unzip|gunzip|gzip|bunzip2|xz|unxz|zstd|7z|install|dpkg|rpm|tee)$/;
 
+/** Commands that only read what is piped to them, as text to search or reshape. */
+const PARSES_TEXT =
+  /^(jq|yq|grep|egrep|fgrep|rg|sed|awk|gawk|mawk|cut|head|tail|tr|sort|uniq|wc|read|ConvertFrom-Json|Select-String|Select-Object|findstr)$/;
+
 /** Interpreter flags that make the interpreter parse its stdin, not run it. */
 const PARSES_STDIN = /^\s+(-c|-e|-p|--eval|--print)\b/;
 
@@ -302,7 +306,12 @@ const PACKAGE_MANAGERS: Record<string, RegExp> = {
 };
 
 /** An argument that names an artefact directly, bypassing the registry's hash. */
-const UNREGISTERED_ARTEFACT = /https?:\/\/|\bgit\+|\bfile:|\.(tgz|tar\.gz|whl|zip)\b/;
+const UNREGISTERED_ARTEFACT =
+  /https?:\/\/|\bgit\+|\bgit(@|:\/\/)|\bssh:\/\/|\b(github|gitlab|bitbucket|gist|file):|\.(tgz|tar\.gz|whl|zip)\b/;
+
+/** npm-family managers read a bare `owner/repo` argument as a GitHub repository. */
+const HOSTED_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(#\S*)?$/;
+const NPM_FAMILY = /^(npm|pnpm|yarn|bun)$/;
 
 interface Command {
   text: string;
@@ -440,23 +449,38 @@ function segmentEnd(sc: Scan, start: number): number {
 }
 
 /**
- * The command name of the simple command starting at `start`, past `sudo`,
- * control keywords and leading assignments. Returns its end index too.
+ * The command name of the simple command starting at `start`, past `sudo`
+ * and its options, control keywords and leading assignments, reduced to its
+ * basename (`/bin/bash` is `bash`). Returns its end index too.
  */
 function commandAt(t: string, start: number): { word: string; end: number } {
   const re = /[\s\\]*("[^"]*"|'[^']*'|[^\s;|&()]+)/y;
   re.lastIndex = start;
+  let wrapped = false;
+  let skipNext = false;
   for (let m = re.exec(t); m; m = re.exec(t)) {
     const tok = m[1]!;
     const bare = tok.replace(/^["']|["']$/g, "");
+    const name = bare.replace(/^.*\/(?=[^/])/, "");
+    if (skipNext) {
+      skipNext = false;
+      continue;
+    }
+    if (/^(sudo|doas|env|exec|nohup)$/.test(name) || /^\$\{?SUDO\}?$/.test(bare)) {
+      wrapped = true;
+      continue;
+    }
+    if (wrapped && bare.startsWith("-")) {
+      skipNext = /^-[ugCprtTUD]$/.test(bare);
+      continue;
+    }
     if (
-      /^(!|\{|then|do|else|elif|if|while|until|time|sudo|doas|exec|env|nohup)$/.test(bare) ||
-      /^\$\{?SUDO\}?$/.test(bare) ||
+      /^(!|\{|then|do|else|elif|if|while|until|time)$/.test(bare) ||
       /^[A-Za-z_][A-Za-z0-9_]*=[^"'`$]*$/.test(tok)
     ) {
       continue;
     }
-    return { word: bare, end: re.lastIndex };
+    return { word: name, end: re.lastIndex };
   }
   return { word: "", end: t.length };
 }
@@ -536,15 +560,21 @@ function fetchKind(
   if (writesFile(tool, args)) return "payload";
 
   // Follow the pipeline: one consumer that runs, extracts or writes what it
-  // receives makes this a payload; parsers (jq, grep, node -e) do not.
+  // receives makes this a payload. Only a pipeline made entirely of parsers
+  // (jq, grep, node -e) reads metadata; any other consumer is presumed to
+  // keep what it was given.
   let consumers = 0;
+  let unknownConsumer = false;
   for (let k = end; t[k] === "|" && t[k + 1] !== "|"; ) {
     const { word, end: wordEnd } = commandAt(t, k + 1);
+    const segEnd = segmentEnd(sc, k + 1);
     consumers++;
-    if (CONSUMES_PAYLOAD.test(word) && !(/^(python3?|node|perl|ruby)$/.test(word) && PARSES_STDIN.test(t.slice(wordEnd)))) {
+    const parses = /^(python3?|node|perl|ruby)$/.test(word) && PARSES_STDIN.test(t.slice(wordEnd));
+    if ((CONSUMES_PAYLOAD.test(word) && !parses) || redirectsToFile(t.slice(wordEnd, segEnd))) {
       return "payload";
     }
-    k = segmentEnd(sc, k + 1);
+    if (!parses && !PARSES_TEXT.test(word)) unknownConsumer = true;
+    k = segEnd;
   }
 
   if ((sc.depth[i] ?? 0) > 0) {
@@ -557,11 +587,15 @@ function fetchKind(
     if (assigned) return evaluatesVar(allText, assigned[1]!) ? "payload" : "metadata";
     return CONSUMES_PAYLOAD.test(commandWord(t, outerStart)) ? "payload" : "metadata";
   }
-  return consumers > 0 ? "metadata" : "payload";
+  return consumers > 0 && !unknownConsumer ? "metadata" : "payload";
+}
+
+function redirectsToFile(args: string): boolean {
+  return /(^|[^0-9&>])>{1,2}\s*(?!&|\/dev\/null)[^\s]/.test(args) || /(^|\s)of=/.test(args);
 }
 
 function writesFile(tool: string, args: string): boolean {
-  if (/(^|[^0-9&>])>{1,2}\s*(?!&|\/dev\/null)[^\s]/.test(args)) return true;
+  if (redirectsToFile(args)) return true;
   switch (tool) {
     case "curl":
       return /(^|\s)(-[A-Za-z]*[oO]|--output|--remote-name|--output-dir)(?=[\s="'$]|$)/.test(args);
@@ -609,7 +643,10 @@ function packageManagerInstall(t: string, sc: Scan, start: number, allText: stri
     verb = assignment[1]!;
   }
   if (!verbs.test(verb)) return null;
-  return UNREGISTERED_ARTEFACT.test(args) ? "unregistered" : manager;
+  if (UNREGISTERED_ARTEFACT.test(args)) return "unregistered";
+  const words = args.trim().split(/\s+/).map((w) => w.replace(/^["']|["']$/g, ""));
+  if (NPM_FAMILY.test(manager) && words.some((w) => HOSTED_SHORTHAND.test(w))) return "unregistered";
+  return manager;
 }
 
 /** Env var names that look like they carry a credential. */
