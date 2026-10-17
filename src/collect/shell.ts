@@ -314,22 +314,46 @@ const HOSTED_SHORTHAND = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(#\S*)?$/;
 const NPM_FAMILY = /^(npm|pnpm|yarn|bun)$/;
 
 /** Package-manager flags whose next word is a value (a directory, a URL), not a package. */
-const TAKES_VALUE = /^(--prefix|--cwd|-C|--dir|--registry|--cache|--userconfig|--globalconfig|--global-folder|--target|-t)$/;
+const TAKES_VALUE =
+  /^(--prefix|--cwd|-C|--dir|--registry|--cache|--userconfig|--globalconfig|--global-folder|--target|-t|-w|--workspace|--filter|-F)$/;
 
-/** The words of a package-manager command line that can name a package. */
-function positionalArgs(args: string): string[] {
-  const words = args
+/** Install flags known to take no value, so the word after one can be a package. */
+const BOOLEAN_FLAG =
+  /^(-g|--global|-D|--save-dev|-E|--save-exact|-S|--save|-O|--save-optional|--no-save|-f|--force|--legacy-peer-deps|--ignore-scripts|--locked|--user)$/;
+
+/** The words of a command line, with redirections and their targets dropped. */
+function argWords(args: string): string[] {
+  return args
     .replace(/\d*>{1,2}&?\s*\S+/g, " ")
     .trim()
     .split(/\s+/)
-    .map((w) => w.replace(/^["']|["']$/g, ""));
+    .map((w) => w.replace(/^["']|["']$/g, ""))
+    .filter(Boolean);
+}
+
+/** The words of a package-manager command line that can name a package. */
+function positionalArgs(args: string): string[] {
+  const words = argWords(args);
   const out: string[] = [];
   for (let k = 0; k < words.length; k++) {
     const w = words[k]!;
     if (TAKES_VALUE.test(w)) k++;
-    else if (w && !w.startsWith("-")) out.push(w);
+    else if (!w.startsWith("-")) out.push(w);
   }
   return out;
+}
+
+/**
+ * Whether an npm-family install names a bare `owner/repo`. A word right after
+ * a flag not known to be boolean is taken as that flag's value, not a package.
+ */
+function namesHostedShorthand(args: string): boolean {
+  const words = argWords(args);
+  return words.some((w, k) => {
+    const prev = words[k - 1] ?? "";
+    const afterValueFlag = prev.startsWith("-") && !prev.includes("=") && !BOOLEAN_FLAG.test(prev);
+    return !afterValueFlag && !w.startsWith("-") && !/^(\.{1,2}\/|\/|~)/.test(w) && HOSTED_SHORTHAND.test(w);
+  });
 }
 
 interface Command {
@@ -578,24 +602,8 @@ function fetchKind(
   if (sc.proc[i]) return "payload"; // bash <(curl ...), source <(curl ...)
   if (writesFile(tool, args)) return "payload";
 
-  // Follow the pipeline: one consumer that runs, extracts or writes what it
-  // receives makes this a payload. Only a pipeline made entirely of parsers
-  // (jq, grep, node -e) reads metadata; any other consumer is presumed to
-  // keep what it was given.
-  let consumers = 0;
-  let unknownConsumer = false;
-  for (let k = end; t[k] === "|" && t[k + 1] !== "|"; ) {
-    const { word, end: wordEnd } = commandAt(t, k + 1);
-    const segEnd = segmentEnd(sc, k + 1);
-    consumers++;
-    const parses = /^(python3?|node|perl|ruby)$/.test(word) && PARSES_STDIN.test(t.slice(wordEnd));
-    if ((CONSUMES_PAYLOAD.test(word) && !parses) || redirectsToFile(t.slice(wordEnd, segEnd))) {
-      return "payload";
-    }
-    if (!parses && !PARSES_TEXT.test(word)) unknownConsumer = true;
-    k = segEnd;
-  }
-  if (unknownConsumer) return "payload";
+  const piped = pipelineKind(t, sc, end);
+  if (piped === "payload") return "payload";
 
   if ((sc.depth[i] ?? 0) > 0) {
     // Captured by $(...). Run directly by its outer command, or captured into
@@ -605,9 +613,30 @@ function fetchKind(
     const prefix = t.slice(outerStart, open);
     const assigned = /(?:^|\s)(?:local\s+|export\s+|readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)=["']?$/.exec(prefix);
     if (assigned) return evaluatesVar(allText, assigned[1]!) ? "payload" : "metadata";
-    return CONSUMES_PAYLOAD.test(commandWord(t, outerStart)) ? "payload" : "metadata";
+    if (CONSUMES_PAYLOAD.test(commandWord(t, outerStart))) return "payload";
+    return pipelineKind(t, sc, segmentEnd(sc, outerStart)) === "payload" ? "payload" : "metadata";
   }
-  return consumers > 0 ? "metadata" : "payload";
+  return piped === "metadata" ? "metadata" : "payload";
+}
+
+/**
+ * What the pipeline after the command ending at `end` does with its input.
+ * One consumer that runs, extracts or writes what it receives makes it a
+ * payload. Only a pipeline made entirely of parsers (jq, grep, node -e) reads
+ * metadata; any other consumer is presumed to keep what it was given.
+ */
+function pipelineKind(t: string, sc: Scan, end: number): "payload" | "metadata" | "none" {
+  let consumers = 0;
+  for (let k = end; t[k] === "|" && t[k + 1] !== "|"; ) {
+    const { word, end: wordEnd } = commandAt(t, k + 1);
+    const segEnd = segmentEnd(sc, k + 1);
+    consumers++;
+    const parses = /^(python3?|node|perl|ruby)$/.test(word) && PARSES_STDIN.test(t.slice(wordEnd));
+    if ((CONSUMES_PAYLOAD.test(word) && !parses) || redirectsToFile(t.slice(wordEnd, segEnd))) return "payload";
+    if (!parses && !PARSES_TEXT.test(word)) return "payload";
+    k = segEnd;
+  }
+  return consumers > 0 ? "metadata" : "none";
 }
 
 function redirectsToFile(args: string): boolean {
@@ -664,9 +693,7 @@ function packageManagerInstall(t: string, sc: Scan, start: number, allText: stri
   }
   if (!verbs.test(verb)) return null;
   if (UNREGISTERED_ARTEFACT.test(args)) return "unregistered";
-  if (NPM_FAMILY.test(manager) && positionalArgs(args).some((w) => !/^(\.{1,2}\/|\/|~)/.test(w) && HOSTED_SHORTHAND.test(w))) {
-    return "unregistered";
-  }
+  if (NPM_FAMILY.test(manager) && namesHostedShorthand(args)) return "unregistered";
   return manager;
 }
 
