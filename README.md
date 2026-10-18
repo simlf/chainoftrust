@@ -179,6 +179,19 @@ absent degrades behaviour rather than breaking it. Without `RATE_LIMIT_SALT`
 the rate limiter's IP digests are salted with the UTC day alone, which rotates
 them daily but leaves them enumerable by anyone who can read the table.
 
+## CI cost
+
+The test workflow (`ci.yml`) runs on pull requests only, not again on push to
+`main`. The deploy workflow debounces merges: its first job waits in the
+`main-debounce` environment, and each newer push to `main` cancels the waiting
+run, so a burst of merges within ten minutes deploys once, for the last one. A
+manual `workflow_dispatch` skips the wait. The environment needs its
+10-minute wait timer set once:
+
+```bash
+gh api -X PUT repos/<owner>/<repo>/environments/main-debounce -F wait_timer=10
+```
+
 ## For agents
 
 `GET /llms.txt` is a plain-text summary of everything below, written for a

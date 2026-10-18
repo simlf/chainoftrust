@@ -1,9 +1,10 @@
 name: CI
 
+# Not run on push to main: every change already passed this on its PR, and
+# the deploy workflow builds and tests again before shipping.
 on:
-  push:
-    branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
