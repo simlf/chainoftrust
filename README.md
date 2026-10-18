@@ -183,9 +183,10 @@ them daily but leaves them enumerable by anyone who can read the table.
 
 The test workflow (`ci.yml`) runs on pull requests only, not again on push to
 `main`. The deploy workflow debounces merges: its first job waits in the
-`main-debounce` environment, and each newer push to `main` cancels the waiting
-run, so a burst of merges within ten minutes deploys once, for the last one. A
-manual `workflow_dispatch` skips the wait. The environment needs its
+`main-debounce` environment, and each newer push to `main` cancels the run still
+waiting there, so a burst of merges within ten minutes deploys once, for the
+last one. A deploy job already running is never cancelled; a newer one queues
+behind it. A manual `workflow_dispatch` skips the wait. The environment needs its
 10-minute wait timer set once:
 
 ```bash
