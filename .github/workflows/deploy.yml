@@ -8,26 +8,28 @@ on:
 permissions:
   contents: read
 
-# A burst of merges deploys once: each newer push cancels the run still
-# waiting in the debounce gate below.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   # No-op gate held by the main-debounce environment's 10-minute wait timer
-  # (no runner minutes while waiting). A manual dispatch skips it.
+  # (no runner minutes while waiting). A manual dispatch skips it. A burst of
+  # merges deploys once: each newer push cancels the run still waiting here.
   debounce:
     if: github.event_name != 'workflow_dispatch'
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-debounce
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     environment: main-debounce
     permissions: {}
     steps:
       - run: echo ok
 
+  # A deploy already running is never cancelled: a newer one queues behind it.
   deploy:
     needs: debounce
     if: always() && (needs.debounce.result == 'success' || needs.debounce.result == 'skipped')
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: production
     steps:
